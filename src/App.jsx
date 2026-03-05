@@ -485,14 +485,33 @@ function maxSwellPast(times, vals, hours) {
 }
 
 function condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist) {
-  const hourlyWindSpd = safe(weather.hourly?.wind_speed_10m?.[wIdx]);
-  const hourlyWindDir = safe(weather.hourly?.wind_direction_10m?.[wIdx]);
-  const currentWindSpd = safe(weather.current?.wind_speed_10m);
-  const currentWindDir = safe(weather.current?.wind_direction_10m);
+  // Check for null/undefined BEFORE calling safe() so we can distinguish
+  // "genuinely calm (0)" from "missing data (null)" — safe(null) returns 0
+  // which would make missing data look like calm conditions.
+  const hourlyWindRaw = weather.hourly?.wind_speed_10m?.[wIdx];
+  const hourlyDirRaw  = weather.hourly?.wind_direction_10m?.[wIdx];
+  const currentWindRaw = weather.current?.wind_speed_10m;
+  const currentDirRaw  = weather.current?.wind_direction_10m;
 
-  const windSpd = hourlyWindSpd > 0 ? hourlyWindSpd : currentWindSpd;
-  const windDir = hourlyWindSpd > 0 ? hourlyWindDir : (currentWindDir || hourlyWindDir);
-  const windSource = hourlyWindSpd > 0 ? "hourly" : (currentWindSpd > 0 ? "current" : "none");
+  const hourlyValid  = hourlyWindRaw  != null && !isNaN(hourlyWindRaw);
+  const currentValid = currentWindRaw != null && !isNaN(currentWindRaw);
+
+  // Prioritise: current block first (most recent real observation),
+  // then hourly forecast, then zero as last resort.
+  let windSpd, windDir, windSource;
+  if (currentValid) {
+    windSpd = safe(currentWindRaw);
+    windDir = safe(currentDirRaw);
+    windSource = "current";
+  } else if (hourlyValid) {
+    windSpd = safe(hourlyWindRaw);
+    windDir = safe(hourlyDirRaw);
+    windSource = "hourly";
+  } else {
+    windSpd = 0;
+    windDir = 0;
+    windSource = "none";
+  }
 
   return {
     swell_h:        safe(marine.hourly?.wave_height?.[mIdx]),
@@ -1356,14 +1375,13 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                   const src = data.cond.wind_source;
                   const spdKt = (spd / 1.852).toFixed(0);
                   let label = `${spd.toFixed(0)}kph (${spdKt}kt) ${dir}`;
-                  if (src === "current") label += " ⚡";
-                  if (src === "none" && spd === 0) label += " ⚠️";
+                  if (src === "none") label += " ⚠️";
                   return label;
                 })(), key: (() => {
                   const src = data.cond.wind_source;
-                  if (src === "current") return "Wind ⚡ live";
-                  if (src === "none") return "Wind ⚠️ no data";
-                  return "Wind";
+                  if (src === "current") return "Wind · live";
+                  if (src === "hourly") return "Wind · forecast";
+                  return "Wind ⚠️ no data";
                 })() },
               { icon: "🌧", val: `${data.cond.rain_48h.toFixed(1)}mm`, key: "Rain 48h" },
               { icon: "🌡️", val: `${data.cond.sst.toFixed(1)}°C`, key: "SST" },
