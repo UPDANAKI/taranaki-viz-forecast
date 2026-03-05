@@ -69,6 +69,7 @@ const SPOTS = [
     name: "Nga Motu — Inshore (Port Taranaki)",
     lat: -39.058, lon: 174.035,
     marine_lat: -39.10, marine_lon: 173.90,
+    weather_lat: -39.07, weather_lon: 174.08,
     shelter: 0.85, river_impact: 0.9,  papa_risk: 0.9,  swell_exposure: 0.85,
     nw_push: 0.3,  nw_rain_penalty: 0.9, southerly_bight: 0.0, tide_sensitive: 1.0,
     note: "Poor flushing. Heavy stormwater/Waiwhakaiho impact. Only good after extended dry calm spells.",
@@ -78,6 +79,7 @@ const SPOTS = [
     name: "Opunake",
     lat: -39.458, lon: 173.858,
     marine_lat: -39.50, marine_lon: 173.70,
+    weather_lat: -39.45, weather_lon: 173.88,
     shelter: 0.4,  river_impact: 0.15, papa_risk: 0.2,  swell_exposure: 0.45,
     nw_push: 0.2,  nw_rain_penalty: 0.2, southerly_bight: 0.0, tide_sensitive: 0.4,
     note: "Low papa + rain shadow under NW. Clears fastest after rain. Best fallback.",
@@ -87,6 +89,7 @@ const SPOTS = [
     name: "Patea — Inshore",
     lat: -39.751, lon: 174.478,
     marine_lat: -39.80, marine_lon: 174.35,
+    weather_lat: -39.75, weather_lon: 174.50,
     shelter: 0.3,  river_impact: 0.85, papa_risk: 0.85, swell_exposure: 0.90,
     nw_push: 0.1,  nw_rain_penalty: 0.75, southerly_bight: 0.9, tide_sensitive: 0.85,
     note: "Papa + persistently muddy Patea River + bight exposure. Triple threat in bad conditions.",
@@ -95,6 +98,8 @@ const SPOTS = [
   {
     name: "Patea — Offshore Trap",
     lat: -39.80, lon: 174.35,
+    marine_lat: -39.80, marine_lon: 174.20,
+    weather_lat: -39.75, weather_lon: 174.47,
     shelter: 0.2,  river_impact: 0.25, papa_risk: 0.3,  swell_exposure: 0.20,
     nw_push: 0.15, nw_rain_penalty: 0.3, southerly_bight: 0.95, tide_sensitive: 0.2,
     note: "Clean on calm northerly days. Devastated by southerlies — Whanganui/Manawatu water floods in.",
@@ -104,7 +109,7 @@ const SPOTS = [
     name: "The Metal Reef",
     lat: -38.9756, lon: 174.2769,
     marine_lat: -38.97, marine_lon: 174.27,
-    weather_lat: -38.97, weather_lon: 174.28,
+    weather_lat: -39.00, weather_lon: 174.23,
     shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,
     nw_push: 0.65,  nw_rain_penalty: 0.55, southerly_bight: 0.3, tide_sensitive: 0.2,
     note: "Steel platform in 30m — unique diving. Papa country + Waitara River runoff, but distance from river mouth reduces direct impact. Benefits from NW blue water push. Clears faster than inshore papa spots after rain.",
@@ -905,30 +910,33 @@ function useAllSpotsData(logEntries) {
       const satPromise = (async () => {
         try {
           // Walk back up to 10 days to find a cloud-free MODIS Aqua tile
+          // Each probe has a 5s timeout so a hanging image can't stall the chain
           let tcDate = null;
           for (let n = 1; n <= 10; n++) {
             const d = new Date();
             d.setDate(d.getDate() - n);
             const dateStr = d.toISOString().split("T")[0];
-            const hasData = await new Promise(resolve => {
-              const img = new Image();
-              img.crossOrigin = "anonymous";
-              // Use a fixed Taranaki tile (zoom 5, tile 19/31) to check for data
-              img.src = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/5/19/31.jpg`;
-              img.onload = () => {
-                try {
-                  const c = document.createElement("canvas");
-                  c.width = 32; c.height = 32;
-                  const ctx = c.getContext("2d");
-                  ctx.drawImage(img, 0, 0, 32, 32);
-                  const px = ctx.getImageData(0, 0, 32, 32).data;
-                  const uniq = new Set();
-                  for (let i = 0; i < px.length; i += 16) uniq.add(`${px[i]},${px[i+1]},${px[i+2]}`);
-                  resolve(uniq.size > 8);
-                } catch { resolve(true); }
-              };
-              img.onerror = () => resolve(false);
-            });
+            const hasData = await Promise.race([
+              new Promise(resolve => {
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.src = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/5/19/31.jpg`;
+                img.onload = () => {
+                  try {
+                    const c = document.createElement("canvas");
+                    c.width = 32; c.height = 32;
+                    const ctx = c.getContext("2d");
+                    ctx.drawImage(img, 0, 0, 32, 32);
+                    const px = ctx.getImageData(0, 0, 32, 32).data;
+                    const uniq = new Set();
+                    for (let i = 0; i < px.length; i += 16) uniq.add(`${px[i]},${px[i+1]},${px[i+2]}`);
+                    resolve(uniq.size > 8);
+                  } catch { resolve(true); }
+                };
+                img.onerror = () => resolve(false);
+              }),
+              new Promise(resolve => setTimeout(() => resolve(false), 5000)), // 5s timeout per probe
+            ]);
             if (hasData) { tcDate = dateStr; break; }
           }
           if (!tcDate) tcDate = (() => { const d = new Date(); d.setDate(d.getDate() - 3); return d.toISOString().split("T")[0]; })();
@@ -968,32 +976,62 @@ function useAllSpotsData(logEntries) {
         }
       })();
 
-      // Fetch weather + marine for all spots in parallel
-      const spotPromises = SPOTS.map(async (spot) => {
+      // Fetch weather + marine for all spots — staggered to avoid rate limiting
+      // (18 simultaneous requests to Open-Meteo triggers 400s on their free tier)
+      const delay = ms => new Promise(r => setTimeout(r, ms));
+      const spotPromises = SPOTS.map(async (spot, spotIdx) => {
+        await delay(spotIdx * 300); // 300ms stagger between spots
         const wLat = spot.weather_lat ?? spot.lat;
         const wLon = spot.weather_lon ?? spot.lon;
         const mLat = spot.marine_lat  ?? spot.lat;
         const mLon = spot.marine_lon  ?? spot.lon;
 
         try {
-          const [weatherRes, marineRes] = await Promise.all([
+          const [weatherRes, marineRes, currentWeatherRes] = await Promise.all([
             fetch(
               `https://api.open-meteo.com/v1/forecast?latitude=${wLat}&longitude=${wLon}` +
-              `&current=wind_speed_10m,wind_direction_10m,precipitation` +
               `&hourly=wind_speed_10m,wind_direction_10m,precipitation` +
-              `&wind_speed_unit=kph&timezone=Pacific%2FAuckland&forecast_days=7&past_days=14`
+              `&wind_speed_unit=kmh&timezone=Pacific%2FAuckland&forecast_days=7&past_days=9`
             ),
             fetch(
               `https://marine-api.open-meteo.com/v1/marine?latitude=${mLat}&longitude=${mLon}` +
               `&hourly=wave_height,wave_period,wave_direction,sea_surface_temperature,ocean_current_velocity,ocean_current_direction` +
-              `&timezone=Pacific%2FAuckland&forecast_days=7&past_days=14`
+              `&timezone=Pacific%2FAuckland&forecast_days=7&past_days=9`
+            ),
+            fetch(
+              `https://api.open-meteo.com/v1/forecast?latitude=${wLat}&longitude=${wLon}` +
+              `&current=wind_speed_10m,wind_direction_10m` +
+              `&wind_speed_unit=kmh&timezone=Pacific%2FAuckland&forecast_days=1`
             ),
           ]);
 
           const weather = await weatherRes.json();
           const marine  = await marineRes.json();
+          const currentWeather = await currentWeatherRes.json();
 
-          const wIdx0 = weather.hourly?.time?.length ? Math.max(0, weather.hourly.time.findIndex(t => t >= new Date().toISOString().slice(0,13))) : -1;
+          // Open-Meteo returns 4xx with a JSON error body — surface these early
+          if (weather.error) throw new Error(`Weather API: ${weather.reason ?? "unknown error"}`);
+          if (marine.error)  throw new Error(`Marine API: ${marine.reason ?? "unknown error"}`);
+
+          // Merge current block into weather object
+          if (currentWeather.current) {
+            weather.current = currentWeather.current;
+          }
+
+          // Guard: if current block has wind speed but no direction, patch from hourly
+          if (
+            weather.current?.wind_speed_10m != null &&
+            weather.current?.wind_direction_10m == null
+          ) {
+            const wIdxFallback = nowIdx(weather.hourly?.time ?? []);
+            const fallbackDir = weather.hourly?.wind_direction_10m?.[wIdxFallback];
+            if (fallbackDir != null) {
+              console.warn(`[${spot.name}] current block missing wind_direction — patching from hourly: ${fallbackDir}°`);
+              weather.current.wind_direction_10m = fallbackDir;
+            }
+          }
+
+          const wIdx0 = nowIdx(weather.hourly?.time ?? []);
           console.log(`[${spot.name}] Weather API:`, {
             hasCurrentBlock: !!weather.current,
             currentWind: weather.current?.wind_speed_10m ?? "MISSING",
@@ -1001,13 +1039,6 @@ function useAllSpotsData(logEntries) {
             hourlyWindAtNow: weather.hourly?.wind_speed_10m?.[wIdx0] ?? "NULL",
             hourlyLength: weather.hourly?.wind_speed_10m?.length ?? 0,
             nonZeroWindHours: (weather.hourly?.wind_speed_10m ?? []).filter(v => v > 0).length,
-            apiError: weather.error || weather.reason || null,
-          });
-          console.log(`[${spot.name}] Marine API:`, {
-            hasHourly: !!marine.hourly,
-            waveHSample: marine.hourly?.wave_height?.slice(0,3) ?? "MISSING",
-            sstSample: marine.hourly?.sea_surface_temperature?.slice(0,3) ?? "MISSING",
-            apiError: marine.error || marine.reason || null,
           });
 
           if (!cancelled) {
@@ -1019,16 +1050,27 @@ function useAllSpotsData(logEntries) {
               logEntries,
             );
 
+            console.log(`[${spot.name}] Wind resolved:`, {
+              source: result.cond.wind_source,
+              spd: result.cond.wind_spd?.toFixed(1) + " kph",
+              dir: result.cond.wind_dir?.toFixed(0) + "° (" + dirName(result.cond.wind_dir) + ")",
+            });
+
             setSpotDataMap(prev => ({ ...prev, [spot.name]: result }));
           }
         } catch(e) {
+          console.error(`[${spot.name}] FETCH FAILED:`, e.message, e);
           if (!cancelled) {
-            setErrors(prev => ({ ...prev, [spot.name]: "Data unavailable" }));
+            setErrors(prev => ({ ...prev, [spot.name]: `Error: ${e.message}` }));
           }
         }
       });
 
-      await Promise.all([...spotPromises, rtofsPromise, satPromise]);
+      await Promise.all([
+        ...spotPromises,
+        rtofsPromise,
+        Promise.race([satPromise, new Promise(r => setTimeout(r, 30000))]), // sat can't block >30s
+      ]);
       if (!cancelled) setLoading(false);
     }
 
@@ -2201,7 +2243,7 @@ function DataSourcesPage() {
             const wLon = s.weather_lon ?? s.lon;
             const mLat = s.marine_lat ?? s.lat;
             const mLon = s.marine_lon ?? s.lon;
-            const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${wLat}&longitude=${wLon}&current=wind_speed_10m,wind_direction_10m,precipitation&hourly=wind_speed_10m,wind_direction_10m,precipitation&wind_speed_unit=kph&timezone=Pacific%2FAuckland&forecast_days=1&past_days=0`;
+            const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${wLat}&longitude=${wLon}&current=wind_speed_10m,wind_direction_10m&hourly=wind_speed_10m,wind_direction_10m,precipitation&wind_speed_unit=kmh&timezone=Pacific%2FAuckland&forecast_days=1&past_days=0`;
             const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${mLat}&longitude=${mLon}&hourly=wave_height,wave_period,wave_direction,sea_surface_temperature&timezone=Pacific%2FAuckland&forecast_days=1&past_days=0`;
             return (
               <div key={i} className="ds-api-block">
