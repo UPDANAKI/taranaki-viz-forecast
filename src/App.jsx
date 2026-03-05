@@ -28,8 +28,8 @@ async function insertLog(entry) { return sbFetch("/dive_logs", { method: "POST",
 // ── Seed initial dive logs if table is empty ──────────────────────────────────
 const SEED_LOGS = [
   { diver_name: "Mike", date: "2026-03-03", spot: "Motumahanga (Saddleback Is.)", observed_vis: 20, tide: "mid", model_score: 100, notes: "" },
-  { diver_name: "Mike", date: "2026-03-02", spot: "Nga Motu — Inshore (Back Beach)", observed_vis: 3, tide: "low", model_score: 68, notes: "" },
-  { diver_name: "Mike", date: "2026-02-23", spot: "Nga Motu — Inshore (Back Beach)", observed_vis: 3, tide: "high", model_score: 68, notes: "Affected by swell, dirty in close" },
+  { diver_name: "Mike", date: "2026-03-02", spot: "Nga Motu — Inshore (Port Taranaki)", observed_vis: 3, tide: "low", model_score: 68, notes: "" },
+  { diver_name: "Mike", date: "2026-02-23", spot: "Nga Motu — Inshore (Port Taranaki)", observed_vis: 3, tide: "high", model_score: 68, notes: "Affected by swell, dirty in close" },
   { diver_name: "Mike", date: "2026-02-13", spot: "Patea — Offshore Trap", observed_vis: 9.6, tide: "high", model_score: 100, notes: "Dirty layer on top, but clear underneath" },
   { diver_name: "Mike", date: "2026-01-27", spot: "Motumahanga (Saddleback Is.)", observed_vis: 15, tide: "low", model_score: 99, notes: "" },
 ];
@@ -66,7 +66,7 @@ const SPOTS = [
     river: false,
   },
   {
-    name: "Nga Motu — Inshore (Back Beach)",
+    name: "Nga Motu — Inshore (Port Taranaki)",
     lat: -39.058, lon: 174.035,
     marine_lat: -39.10, marine_lon: 173.90,
     shelter: 0.85, river_impact: 0.9,  papa_risk: 0.9,  swell_exposure: 0.85,
@@ -101,12 +101,13 @@ const SPOTS = [
     river: false,
   },
   {
-    name: "Tongaporutu",
-    lat: -38.818, lon: 174.573,
-    marine_lat: -38.85, marine_lon: 174.40,
-    shelter: 0.2,  river_impact: 0.85, papa_risk: 0.88, swell_exposure: 0.88,
-    nw_push: 0.7,  nw_rain_penalty: 0.90, southerly_bight: 0.0, tide_sensitive: 0.6,
-    note: "Heavy papa/mudstone cliffs + Tongaporutu River runoff. Exceptional vis on long calm spells, but takes 10–14 days to fully clear after rain. Long drive only worth it when score is 65+.",
+    name: "The Metal Reef",
+    lat: -38.9756, lon: 174.2769,
+    marine_lat: -38.97, marine_lon: 174.27,
+    weather_lat: -38.97, weather_lon: 174.28,
+    shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,
+    nw_push: 0.65,  nw_rain_penalty: 0.55, southerly_bight: 0.3, tide_sensitive: 0.2,
+    note: "Steel platform in 30m — unique diving. Papa country + Waitara River runoff, but distance from river mouth reduces direct impact. Benefits from NW blue water push. Clears faster than inshore papa spots after rain.",
     river: true,
   },
 ];
