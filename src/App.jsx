@@ -112,7 +112,7 @@ const SPOTS = [
     weather_lat: -39.00, weather_lon: 174.23,
     shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,
     nw_push: 0.65,  nw_rain_penalty: 0.55, southerly_bight: 0.3, tide_sensitive: 0.2,
-    note: "Steel platform in 30m — unique diving. Papa country + Waitara River runoff, but distance from river mouth reduces direct impact. Benefits from NW blue water push. Clears faster than inshore papa spots after rain.",
+    note: "Reef at 30m — unique diving. Papa country + Waitara River runoff, but distance from river mouth reduces direct impact. Benefits from NW blue water push. Clears faster than inshore papa spots after rain.",
     river: true,
   },
 ];
