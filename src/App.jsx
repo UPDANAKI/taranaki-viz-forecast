@@ -52,20 +52,13 @@ async function seedLogsIfEmpty() {
   }
 }
 
-// ── Spots with per-spot modifiers from the Flask app ──────────────────────────
-// marine_lat/marine_lon: open-ocean reference point for the Open-Meteo marine API.
-// The marine API's ~0.5° grid classifies near-shore and island coordinates as "land",
-// returning null for wave_height etc. These offsets place the query in the nearest
-// open-ocean grid cell while keeping lat/lon for display and satellite sampling.
-// weather_lat/weather_lon: same idea for the weather API if the display coordinate
-// falls outside the land grid (e.g. offshore islands).
-
+// ── Spots with per-spot modifiers ─────────────────────────────────────────────
 const SPOTS = [
   {
     name: "Motumahanga (Saddleback Is.)",
     lat: -39.043, lon: 174.022,
-    marine_lat: -39.10, marine_lon: 173.90,   // ~10km SW in open water — well clear of coastal land mask
-    weather_lat: -39.055, weather_lon: 174.04, // onshore New Plymouth — guarantees wind data
+    marine_lat: -39.10, marine_lon: 173.90,
+    weather_lat: -39.055, weather_lon: 174.04,
     shelter: 0.6,  river_impact: 0.2,  papa_risk: 0.4,  swell_exposure: 0.15,
     nw_push: 0.8,  nw_rain_penalty: 0.5, southerly_bight: 0.0, tide_sensitive: 0.3,
     plume_reach: 0.7,
@@ -75,7 +68,7 @@ const SPOTS = [
   {
     name: "Nga Motu — Inshore (Back Beach)",
     lat: -39.058, lon: 174.035,
-    marine_lat: -39.10, marine_lon: 173.90,   // shares Motumahanga's marine ref — same swell field
+    marine_lat: -39.10, marine_lon: 173.90,
     shelter: 0.85, river_impact: 0.9,  papa_risk: 0.9,  swell_exposure: 0.85,
     nw_push: 0.3,  nw_rain_penalty: 0.9, southerly_bight: 0.0, tide_sensitive: 1.0,
     note: "Poor flushing. Heavy stormwater/Waiwhakaiho impact. Only good after extended dry calm spells.",
@@ -84,7 +77,7 @@ const SPOTS = [
   {
     name: "Opunake",
     lat: -39.458, lon: 173.858,
-    marine_lat: -39.50, marine_lon: 173.70,   // offshore Opunake — clear of land mask
+    marine_lat: -39.50, marine_lon: 173.70,
     shelter: 0.4,  river_impact: 0.15, papa_risk: 0.2,  swell_exposure: 0.45,
     nw_push: 0.2,  nw_rain_penalty: 0.2, southerly_bight: 0.0, tide_sensitive: 0.4,
     note: "Low papa + rain shadow under NW. Clears fastest after rain. Best fallback.",
@@ -93,7 +86,7 @@ const SPOTS = [
   {
     name: "Patea — Inshore",
     lat: -39.751, lon: 174.478,
-    marine_lat: -39.80, marine_lon: 174.35,   // offshore south Taranaki bight
+    marine_lat: -39.80, marine_lon: 174.35,
     shelter: 0.3,  river_impact: 0.85, papa_risk: 0.85, swell_exposure: 0.90,
     nw_push: 0.1,  nw_rain_penalty: 0.75, southerly_bight: 0.9, tide_sensitive: 0.85,
     note: "Papa + persistently muddy Patea River + bight exposure. Triple threat in bad conditions.",
@@ -110,7 +103,7 @@ const SPOTS = [
   {
     name: "Tongaporutu",
     lat: -38.818, lon: 174.573,
-    marine_lat: -38.85, marine_lon: 174.40,   // offshore north Taranaki
+    marine_lat: -38.85, marine_lon: 174.40,
     shelter: 0.2,  river_impact: 0.85, papa_risk: 0.88, swell_exposure: 0.88,
     nw_push: 0.7,  nw_rain_penalty: 0.90, southerly_bight: 0.0, tide_sensitive: 0.6,
     note: "Heavy papa/mudstone cliffs + Tongaporutu River runoff. Exceptional vis on long calm spells, but takes 10–14 days to fully clear after rain. Long drive only worth it when score is 65+.",
@@ -118,7 +111,7 @@ const SPOTS = [
   },
 ];
 
-// ── Scoring weights (defaults from Flask app) ─────────────────────────────────
+// ── Scoring weights ────────────────────────────────────────────────────────────
 const W = {
   w_swell: 0.45, w_wind: 0.25, w_rain: 0.30,
   nw_push_mult: 18.0, nw_rain_mult: 20.0,
@@ -136,7 +129,7 @@ function dirName(deg) {
   return dirs[Math.round(deg / 22.5) % 16];
 }
 
-// ── Scoring functions (unchanged) ─────────────────────────────────────────────
+// ── Scoring functions ──────────────────────────────────────────────────────────
 
 function swellScore(h, p, spot) {
   const exposure = spot?.swell_exposure ?? 0.5;
@@ -278,11 +271,35 @@ function scoreSpot(cond, spot) {
   const shelter = spot.shelter * Math.max(0, 100 - s) * W.shelter_mult;
   const river   = -riverImpactEffective * (100 - r) * W.river_mult;
 
-  const total = base + nw + cur + sstAdj + tideAdj + shelter + river + recovery;
+  // ── CHANGE 1: Satellite turbidity adjustment ──────────────────────────────
+  // cond.satTurbidity: 0–100 index from MODIS TrueColor pixel sampling
+  // High satellite turbidity directly suppresses the rain score component,
+  // providing ground-truth correction when satellite data is fresh (< 2 days old).
+  let satAdj = 0;
+  if (cond.satTurbidity != null && cond.satTurbidityAge != null) {
+    // Weight satellite confidence by age: full weight at 0 days, zero at 3+ days
+    const satConfidence = Math.max(0, 1 - cond.satTurbidityAge / 3);
+    if (satConfidence > 0) {
+      // Map turbidity index (0–100) to a rain-equivalent penalty (0–95)
+      // High turbidity (>60) overrides rain model with strong penalty
+      // Low turbidity (<20) provides a small clarity bonus
+      const satPenalty = cond.satTurbidity > 60
+        ? Math.min(95, cond.satTurbidity * 1.2) * satConfidence
+        : cond.satTurbidity > 20
+        ? cond.satTurbidity * 0.6 * satConfidence
+        : 0;
+      const satBonus = cond.satTurbidity < 20
+        ? (20 - cond.satTurbidity) * 0.3 * satConfidence
+        : 0;
+      satAdj = satBonus - satPenalty;
+    }
+  }
+
+  const total = base + nw + cur + sstAdj + tideAdj + shelter + river + recovery + satAdj;
   return {
     score: Math.max(0, Math.min(100, Math.round(total))),
     plumeReach: Math.round(plumeReach * 100),
-    factors: { swell: s, wind: wn, rain: r, nw, current: cur, sst: sstAdj, tide: tideAdj, recovery },
+    factors: { swell: s, wind: wn, rain: r, nw, current: cur, sst: sstAdj, tide: tideAdj, recovery, satellite: satAdj },
   };
 }
 
@@ -381,7 +398,6 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
         try {
           const [r, g, b, a] = rgba(spot.pixelX, spot.pixelY);
           if (a < 10) continue;
-          // Simple turbidity index from RGB ratios
           const blueness  = b / Math.max(1, r + g + b);
           const brownness = (r * 0.6 + g * 0.3) / Math.max(1, b);
           const turb = Math.min(100, Math.max(0, Math.round(brownness * 60 - blueness * 30 + 10)));
@@ -468,13 +484,8 @@ function maxSwellPast(times, vals, hours) {
 }
 
 function condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist) {
-  // Hourly wind at matched index
   const hourlyWindSpd = safe(weather.hourly?.wind_speed_10m?.[wIdx]);
   const hourlyWindDir = safe(weather.hourly?.wind_direction_10m?.[wIdx]);
-
-  // Fallback: use weather.current if hourly is null/0
-  // The API returns `current` as the real-time observation which is often more reliable
-  // than the hourly grid value for the matched timestamp.
   const currentWindSpd = safe(weather.current?.wind_speed_10m);
   const currentWindDir = safe(weather.current?.wind_direction_10m);
 
@@ -505,7 +516,6 @@ function getDailyScores(marine, weather, spot) {
   const mTimes = marine?.hourly?.time ?? [];
   const wTimes = weather?.hourly?.time ?? [];
 
-  // ── Build daily buckets for ALL days (past + forecast) ──
   const mByDate = {};
   mTimes.forEach((t, i) => {
     const date = t.split("T")[0];
@@ -529,11 +539,9 @@ function getDailyScores(marine, weather, spot) {
   const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
   const sum = arr => arr.reduce((a, b) => a + b, 0);
 
-  // ── Build chronological timeline of ALL dates in the data ──
   const allDates = [...new Set([...Object.keys(mByDate), ...Object.keys(wByDate)])].sort();
   const todayStr = new Date().toLocaleDateString("en-CA");
 
-  // Daily rain and max swell for the entire timeline (past + forecast)
   const dailyRainMap = {};
   const dailySwellMaxMap = {};
   const dailySwellAvgMap = {};
@@ -545,34 +553,28 @@ function getDailyScores(marine, weather, spot) {
     dailySwellAvgMap[d] = m ? avg(m.waveH) : 0;
   });
 
-  // ── Get forecast dates (today + next 6 days) ──
   const futureDates = allDates.filter(d => d >= todayStr).slice(0, 7);
 
   return futureDates.map((date, dayIdx) => {
     const m = mByDate[date];
     const w = wByDate[date] ?? { wind: [0], windDir: [270], precip: [0] };
 
-    // ── Proper rain_48h: sum of this day + previous day ──
     const dateIdx = allDates.indexOf(date);
     let rain48h = dailyRainMap[date] || 0;
     if (dateIdx > 0) rain48h += dailyRainMap[allDates[dateIdx - 1]] || 0;
 
-    // ── Proper days_since_rain: count backwards from this day until rain > 3mm ──
     let daysSinceRainVal = 0;
     for (let i = dateIdx; i >= 0; i--) {
       if ((dailyRainMap[allDates[i]] || 0) > 3) break;
       daysSinceRainVal++;
     }
 
-    // ── Proper swell_hist_72h: max swell in the 3 days preceding this day ──
     let swellHist72 = 0;
     for (let i = Math.max(0, dateIdx - 3); i < dateIdx; i++) {
       swellHist72 = Math.max(swellHist72, dailySwellMaxMap[allDates[i]] || 0);
     }
-    // Include today too if it's the first forecast day
     if (dayIdx === 0) swellHist72 = Math.max(swellHist72, dailySwellMaxMap[date] || 0);
 
-    // ── Build rainHistory (last 14 days before this forecast date) for plume/recovery ──
     const rainHistory = [];
     for (let i = 0; i < 14; i++) {
       const idx = dateIdx - i;
@@ -580,7 +582,6 @@ function getDailyScores(marine, weather, spot) {
       else rainHistory.push(0);
     }
 
-    // ── Build swellHistory (last 7 days before this date) for recovery bonus ──
     const swellHistory = [];
     for (let i = 0; i < 7; i++) {
       const idx = dateIdx - i;
@@ -690,8 +691,7 @@ function useCommunityLogs() {
     if (!isConfigured) { setLogStatus("unconfigured"); return; }
     setLogStatus("loading");
     try {
-      // Seed if table is empty (first-time setup)
-      const seeded = await seedLogsIfEmpty();
+      await seedLogsIfEmpty();
       const data = await fetchCommunityLogs();
       setLogs(data);
       setLogStatus("ok");
@@ -745,7 +745,6 @@ function applyBias(score, biasMult) {
   return Math.max(0, score - 30);
 }
 
-
 // ── RTOFS ocean current fetch ─────────────────────────────────────────────────
 
 async function fetchOceanCurrent() {
@@ -775,42 +774,28 @@ async function fetchOceanCurrent() {
 // ══════════════════════════════════════════════════════════════════════════════
 // CONSOLIDATED DATA HOOK
 // ══════════════════════════════════════════════════════════════════════════════
-//
-// BEFORE (original architecture):
-//   - Each SpotCard independently fetched weather + marine data (12 API calls)
-//   - Advice panel made a 13th + 14th duplicate fetch
-//   - RTOFS current data was fetched inside SpotMap but never reached SpotCard scoring
-//   - Total: 14 Open-Meteo calls + 1 RTOFS + N ERDDAP calls
-//
-// AFTER (this hook):
-//   - One shared fetch per spot (6 weather + 6 marine = 12 calls, same as before)
-//   - BUT: no duplicate advice fetch (-2 calls)
-//   - RTOFS fetched once, shared with all spots via this hook's state
-//   - All scoring runs centrally — no stale closures
-//   - SpotCard is now a pure display component (no fetch, no scoring)
-//   - Total: 12 Open-Meteo calls + 1 RTOFS + N ERDDAP calls (saved 2 calls + fixed data flow)
-//
-// The real win isn't just fewer calls — it's that RTOFS current data and
-// didn't before due to the scoping bug.
-// ══════════════════════════════════════════════════════════════════════════════
 
 function useAllSpotsData(logEntries) {
-  // ── Shared ocean data (fetched once for the whole coast) ────────────────
-  const [currentData, setCurrentData]     = useState(null);   // RTOFS HYCOM
+  // ── Shared ocean data ────────────────────────────────────────────────────
+  const [currentData, setCurrentData]     = useState(null);
   const [currentStatus, setCurrentStatus] = useState("idle");
 
-  // ── Per-spot weather/marine data + computed scores ─────────────────────
-  const [spotDataMap, setSpotDataMap]     = useState({});       // { [spotName]: { cond, score, rawScore, factors, forecast, ... } }
-  const [loading, setLoading]             = useState(true);
-  const [errors, setErrors]               = useState({});       // { [spotName]: string }
+  // ── CHANGE 2: Satellite turbidity state ──────────────────────────────────
+  const [satData, setSatData]     = useState({});   // { [spotName]: { turbidity, r, g, b, date, agedays } }
+  const [satStatus, setSatStatus] = useState("idle");
+  const satRef = useRef({});
 
-  // Refs to hold latest ocean data for the scoring pass
+  // ── Per-spot scored data ─────────────────────────────────────────────────
+  const [spotDataMap, setSpotDataMap]     = useState({});
+  const [loading, setLoading]             = useState(true);
+  const [errors, setErrors]               = useState({});
+
   const currentRef  = useRef(null);
 
-  // Keep refs in sync
   useEffect(() => { currentRef.current  = currentData;  }, [currentData]);
+  // CHANGE 2: Keep satRef in sync
+  useEffect(() => { satRef.current = satData; }, [satData]);
 
-  // ── Score a spot given its raw API data + shared ocean data ─────────────
   const computeSpotResult = useCallback((spot, marine, weather, rtofs, entries) => {
     const mTimes = marine.hourly?.time ?? [];
     const wTimes = weather.hourly?.time ?? [];
@@ -823,39 +808,41 @@ function useAllSpotsData(logEntries) {
     const rainHist  = dailyRainHistory(wTimes, weather.hourly?.precipitation ?? [], 14);
     const swellHist = dailySwellHistory(mTimes, marine.hourly?.wave_height ?? [], 7);
 
-    // Build base conditions
     const condBase = condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist);
 
-    // Override current with RTOFS if available (fixes the scoping bug)
     const rtofsOverride = rtofs?.valid
       ? { current_vel: rtofs.speed / 1.944, current_dir: rtofs.dir }
+      : {};
+
+    // CHANGE 2: Pull satellite turbidity for this spot if available
+    const satSpot = satRef.current?.[spot.name];
+    const satOverride = satSpot
+      ? { satTurbidity: satSpot.turbidity, satTurbidityAge: satSpot.agedays }
       : {};
 
     const cond = {
       ...condBase,
       ...rtofsOverride,
+      ...satOverride,
       rainHistory: rainHist,
       swellHistory: swellHist,
     };
 
     const { score: rawScore, factors, plumeReach } = scoreSpot(cond, spot);
 
-    // Bias correction from logged observations
     const biasMult = spotBiasMultiplier(spot.name, entries || []);
     let score = applyBias(rawScore, biasMult);
 
-    // Forecast
     const forecast = getDailyScores(marine, weather, spot);
 
     return {
       cond, score, rawScore, factors, forecast, biasMult,
       plumeReach: plumeReach ?? 0,
+      satData: satRef.current?.[spot.name] ?? null,
     };
   }, []);
 
-  // ── Re-score all spots when ocean data or log entries change ────────────
-  // Stores raw API responses so we can re-score without re-fetching
-  const rawApiRef = useRef({});  // { [spotName]: { marine, weather } }
+  const rawApiRef = useRef({});
 
   const rescoreAll = useCallback(() => {
     const raw = rawApiRef.current;
@@ -869,9 +856,7 @@ function useAllSpotsData(logEntries) {
       if (!api) continue;
       try {
         updated[spot.name] = computeSpotResult(spot, api.marine, api.weather, rtofs, logEntries);
-      } catch(e) {
-        // keep existing data if rescore fails
-      }
+      } catch(e) {}
     }
     if (Object.keys(updated).length > 0) {
       setSpotDataMap(prev => ({ ...prev, ...updated }));
@@ -881,23 +866,90 @@ function useAllSpotsData(logEntries) {
   // Rescore when ocean data arrives (RTOFS)
   useEffect(() => { rescoreAll(); }, [currentData, logEntries, rescoreAll]);
 
-  // ── Initial fetch: all spots in parallel ────────────────────────────────
+  // CHANGE 3: Rescore when satellite turbidity arrives
+  useEffect(() => { rescoreAll(); }, [satData, rescoreAll]);
+
   useEffect(() => {
     let cancelled = false;
 
     async function fetchAll() {
       setLoading(true);
 
-      // Fire RTOFS in background (don't block spot data)
+      // Fire RTOFS in background
       const rtofsPromise = fetchOceanCurrent()
         .then(data  => { if (!cancelled) { setCurrentData(data); setCurrentStatus("ok"); } })
         .catch(err  => { if (!cancelled) { setCurrentStatus("error"); setCurrentData({ valid: false, error: err.message }); } });
 
+      // CHANGE 3: Fire satellite turbidity fetch in background
+      setSatStatus("loading");
+      const satPromise = (async () => {
+        try {
+          // Walk back up to 10 days to find a cloud-free MODIS Aqua tile
+          let tcDate = null;
+          for (let n = 1; n <= 10; n++) {
+            const d = new Date();
+            d.setDate(d.getDate() - n);
+            const dateStr = d.toISOString().split("T")[0];
+            const hasData = await new Promise(resolve => {
+              const img = new Image();
+              img.crossOrigin = "anonymous";
+              // Use a fixed Taranaki tile (zoom 5, tile 19/31) to check for data
+              img.src = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/5/19/31.jpg`;
+              img.onload = () => {
+                try {
+                  const c = document.createElement("canvas");
+                  c.width = 32; c.height = 32;
+                  const ctx = c.getContext("2d");
+                  ctx.drawImage(img, 0, 0, 32, 32);
+                  const px = ctx.getImageData(0, 0, 32, 32).data;
+                  const uniq = new Set();
+                  for (let i = 0; i < px.length; i += 16) uniq.add(`${px[i]},${px[i+1]},${px[i+2]}`);
+                  resolve(uniq.size > 8);
+                } catch { resolve(true); }
+              };
+              img.onerror = () => resolve(false);
+            });
+            if (hasData) { tcDate = dateStr; break; }
+          }
+          if (!tcDate) tcDate = (() => { const d = new Date(); d.setDate(d.getDate() - 3); return d.toISOString().split("T")[0]; })();
+
+          const pixels = await sampleGibsTile(
+            "MODIS_Aqua_CorrectedReflectance_TrueColor", tcDate, 9, "jpg", SPOTS
+          );
+
+          const today = new Date();
+          const imgDate = new Date(tcDate + "T00:00:00");
+          const agedays = Math.round((today - imgDate) / 86400000);
+
+          const result = {};
+          SPOTS.forEach(s => {
+            const px = pixels[s.name];
+            if (px) {
+              result[s.name] = {
+                turbidity: px.turbidity,
+                r: px.r, g: px.g, b: px.b,
+                date: tcDate,
+                agedays,
+              };
+            }
+          });
+
+          if (!cancelled) {
+            satRef.current = result;
+            setSatData(result);
+            setSatStatus("ok");
+            console.log(`[Satellite] Turbidity data loaded from ${tcDate} (${agedays} days old):`,
+              Object.fromEntries(Object.entries(result).map(([k, v]) => [k, v.turbidity]))
+            );
+          }
+        } catch(e) {
+          console.warn("[Satellite] Turbidity fetch failed:", e);
+          if (!cancelled) setSatStatus("error");
+        }
+      })();
+
       // Fetch weather + marine for all spots in parallel
       const spotPromises = SPOTS.map(async (spot) => {
-        // Use reference coordinates for API calls when available.
-        // Display lat/lon may fall in a "land" grid cell (e.g. offshore islands),
-        // so marine_lat/marine_lon shifts the query to the nearest open-ocean cell.
         const wLat = spot.weather_lat ?? spot.lat;
         const wLon = spot.weather_lon ?? spot.lon;
         const mLat = spot.marine_lat  ?? spot.lat;
@@ -921,7 +973,6 @@ function useAllSpotsData(logEntries) {
           const weather = await weatherRes.json();
           const marine  = await marineRes.json();
 
-          // Diagnostic logging for wind data issues
           const wIdx0 = weather.hourly?.time?.length ? Math.max(0, weather.hourly.time.findIndex(t => t >= new Date().toISOString().slice(0,13))) : -1;
           console.log(`[${spot.name}] Weather API:`, {
             hasCurrentBlock: !!weather.current,
@@ -940,13 +991,11 @@ function useAllSpotsData(logEntries) {
           });
 
           if (!cancelled) {
-            // Store raw API data for later re-scoring
             rawApiRef.current[spot.name] = { marine, weather };
 
-            // Compute initial score (without RTOFS/chl which may still be loading)
             const result = computeSpotResult(
               spot, marine, weather,
-              currentRef.current,   // may be null on first pass
+              currentRef.current,
               logEntries,
             );
 
@@ -959,26 +1008,29 @@ function useAllSpotsData(logEntries) {
         }
       });
 
-      await Promise.all([...spotPromises, rtofsPromise]);
+      await Promise.all([...spotPromises, rtofsPromise, satPromise]);
       if (!cancelled) setLoading(false);
     }
 
     fetchAll();
     return () => { cancelled = true; };
-  }, []); // Only fetch on mount — rescore handles updates
+  }, []);
 
+  // CHANGE 3: Expose satData and satStatus
   return {
     spotDataMap,
     loading,
     errors,
     currentData,
     currentStatus,
+    satData,
+    satStatus,
   };
 }
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// UI COMPONENTS (display-only — no fetching)
+// UI COMPONENTS
 // ══════════════════════════════════════════════════════════════════════════════
 
 function FactorBar({ label, value, isDelta }) {
@@ -1027,8 +1079,6 @@ function ForecastBar({ days }) {
     </div>
   );
 }
-
-// ── Wind forecast bar ────────────────────────────────────────────────────────
 
 function WindForecastBar({ days }) {
   if (!days || days.length === 0) return null;
@@ -1116,7 +1166,6 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
     if (isNaN(v) || v <= 0 || v > 50) { setErr("Enter a valid visibility in metres (e.g. 3)"); return; }
     setSaving(true); setErr(null);
 
-    // Save locally
     const localEntry = {
       id: Date.now(), date, spot: spot.name,
       observedVis: v, tide, modelScore,
@@ -1127,7 +1176,6 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
     saveLog(updated);
     onSave(updated);
 
-    // Save to Supabase community log
     if (isConfigured && onCommunitySave) {
       try {
         await onCommunitySave({
@@ -1222,7 +1270,7 @@ function SpotHistory({ spotName, entries }) {
   );
 }
 
-// ── Spot card (DISPLAY ONLY — receives all data as props) ─────────────────────
+// ── Spot card ─────────────────────────────────────────────────────────────────
 
 function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, communityLogs, logStatus, onCommunitySave, diverName, isConfigured }) {
   const [expanded, setExpanded] = useState(false);
@@ -1318,6 +1366,30 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                 })() },
               { icon: "🌧", val: `${data.cond.rain_48h.toFixed(1)}mm`, key: "Rain 48h" },
               { icon: "🌡️", val: `${data.cond.sst.toFixed(1)}°C`, key: "SST" },
+              // CHANGE 4: Satellite turbidity row
+              ...(data.satData ? [{
+                icon: "🛰️",
+                val: (() => {
+                  const t = data.satData.turbidity;
+                  const age = data.satData.agedays;
+                  const label = t > 60 ? "Turbid" : t > 30 ? "Moderate" : t > 10 ? "Clear" : "Very Clear";
+                  const tColor = t > 60 ? "#e03030" : t > 30 ? "#f07040" : t > 10 ? "#f0c040" : "#00e5a0";
+                  return (
+                    <span>
+                      <span style={{color: tColor}}>{label} ({t})</span>
+                      {" "}
+                      <span style={{
+                        display:"inline-block", width:10, height:10,
+                        borderRadius:"50%", verticalAlign:"middle",
+                        background:`rgb(${data.satData.r},${data.satData.g},${data.satData.b})`,
+                        border:"1px solid #334"
+                      }} />
+                      <span style={{color:"#4a7a8a",fontSize:"0.65rem"}}> {age}d ago</span>
+                    </span>
+                  );
+                })(),
+                key: "Sat Turbidity",
+              }] : []),
               { icon: "🌀", val: (() => {
                   if (currentData?.valid) return `${currentData.speed.toFixed(1)}kt ${currentData.dirLabel} (RTOFS)`;
                   return `${data.cond.current_vel.toFixed(2)}m/s ${dirName(data.cond.current_dir)}`;
@@ -1330,7 +1402,9 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                   <div className="cond-key">{c.key}</div>
                 </div>
               </div>
-            ))}          </div>
+            ))}
+          </div>
+
           {/* Factor breakdown */}
           <div className="factors-grid">
             <FactorBar label="Swell" value={data.factors.swell} isDelta={false} />
@@ -1341,6 +1415,10 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
             <FactorBar label="SST" value={data.factors.sst} isDelta={true} />
             <FactorBar label="Tide" value={data.factors.tide} isDelta={true} />
             <FactorBar label="Recovery" value={data.factors.recovery ?? 0} isDelta={true} />
+            {/* CHANGE 4: Satellite factor bar */}
+            {data.factors.satellite != null && data.factors.satellite !== 0 && (
+              <FactorBar label="Satellite" value={data.factors.satellite} isDelta={true} />
+            )}
           </div>
 
           <div className="spot-note">{spot.note}</div>
@@ -1457,12 +1535,10 @@ function BestDayPanel({ spotDataMap }) {
 // ── Advice panel ──────────────────────────────────────────────────────────────
 
 function AdvicePanel({ spotDataMap }) {
-  // Derive advice from scored data — no separate fetch needed
   const advice = useMemo(() => {
     const entries = Object.entries(spotDataMap);
     if (entries.length === 0) return [];
 
-    // Use the first loaded spot's conditions for general advice
     const firstData = entries[0]?.[1];
     if (!firstData?.cond) return [];
 
@@ -1511,7 +1587,6 @@ function Legend() {
 
 
 // ── Satellite map ─────────────────────────────────────────────────────────────
-// Receives scores + ocean data from parent — no independent fetching
 
 function SpotMap({ spotScores, currentData, currentStatus }) {
   const mapRef         = useRef(null);
@@ -1573,7 +1648,6 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
     return dateStrNDaysAgo(3);
   }
 
-
   function buildMarkers(map, L, scoresArg) {
     markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
@@ -1634,17 +1708,6 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
     const tcDate = await findLastClearDate("MODIS_Aqua_CorrectedReflectance_TrueColor", "jpg", 12);
 
     setLayerDates({ truecolor: tcDate });
-
-    // Pixel-sample in background
-    sampleGibsTile("MODIS_Aqua_CorrectedReflectance_TrueColor", tcDate, 9, "jpg", SPOTS).then((tcPixels) => {
-      const merged = {};
-      SPOTS.forEach(s => {
-        merged[s.name] = {
-          turbidity: tcPixels[s.name]?.turbidity   ?? null,          rgb_tc:    tcPixels[s.name]  ? [tcPixels[s.name].r,  tcPixels[s.name].g,  tcPixels[s.name].b]  : null,
-          tcDate:    tcDate,
-        };
-      });
-    }).catch(() => {});
 
     const satellite = L.tileLayer(
       `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${tcDate}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`,
@@ -1714,7 +1777,8 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
   }
 
   const layerBtns = [
-    { id: "satellite",   label: "🛰 Satellite",   date: layerDates.truecolor },  ];
+    { id: "satellite", label: "🛰 Satellite", date: layerDates.truecolor },
+  ];
 
   return (
     <div className="spot-map-wrap">
@@ -1827,7 +1891,7 @@ function DataSourcesPage() {
       resolution: "250m (true colour)",
       models: "MODIS Aqua/Terra True Colour",
       license: "NASA EOSDIS — public domain",
-      notes: "The app samples the exact pixel colour at each spot location from WMTS tiles to compute a turbidity index from RGB ratios. Searches back up to 10 days for cloud-free scenes.",
+      notes: "The app samples the exact pixel colour at each spot location from WMTS tiles to compute a turbidity index from RGB ratios. Searches back up to 10 days for cloud-free scenes. Turbidity data is now integrated into spot scores via satAdj factor (age-weighted, full trust at 0 days, zero trust at 3+ days).",
     },
   ];
 
@@ -1839,7 +1903,6 @@ function DataSourcesPage() {
         <p className="ds-hero-sub">Everything you need to verify and understand this model's inputs</p>
       </div>
 
-      {/* Wind Data Quality Note */}
       <div className="ds-alert">
         <div className="ds-alert-icon">⚠️</div>
         <div className="ds-alert-content">
@@ -1866,10 +1929,9 @@ function DataSourcesPage() {
         </div>
       </div>
 
-      {/* Data Sources */}
       <div className="ds-section">
         <h3 className="ds-section-title">🔗 Data Sources</h3>
-        <p className="ds-section-desc">The model pulls from 5 independent data sources, cross-referencing satellite imagery with forecast models and ocean current observations.</p>
+        <p className="ds-section-desc">The model pulls from 4 independent data sources, cross-referencing satellite imagery with forecast models and ocean current observations.</p>
         <div className="ds-sources">
           {dataSources.map((src, i) => (
             <div key={i} className="ds-source-card">
@@ -1909,7 +1971,6 @@ function DataSourcesPage() {
         </div>
       </div>
 
-      {/* GPS Coordinates */}
       <div className="ds-section">
         <h3 className="ds-section-title">📍 Spot GPS Coordinates</h3>
         <p className="ds-section-desc">
@@ -1955,7 +2016,6 @@ function DataSourcesPage() {
         </div>
       </div>
 
-      {/* Spot Parameters */}
       <div className="ds-section">
         <h3 className="ds-section-title">⚙️ Spot Scoring Parameters</h3>
         <p className="ds-section-desc">
@@ -1998,12 +2058,11 @@ function DataSourcesPage() {
         </div>
       </div>
 
-      {/* Scoring Weights */}
       <div className="ds-section">
         <h3 className="ds-section-title">⚖️ Global Scoring Weights</h3>
         <p className="ds-section-desc">
           The base score is a weighted average of swell, wind, and rain sub-scores,
-          then modified by NW push, ocean current, SST, tide, shelter, river, and recovery bonuses.
+          then modified by NW push, ocean current, SST, tide, shelter, river, recovery, and satellite turbidity adjustments.
         </p>
         <div className="ds-weights-grid">
           {[
@@ -2027,7 +2086,6 @@ function DataSourcesPage() {
         </div>
       </div>
 
-      {/* Validation & Calibration */}
       <div className="ds-section">
         <h3 className="ds-section-title">🔬 Calibration & Validation</h3>
         <div className="ds-validation-items">
@@ -2039,11 +2097,22 @@ function DataSourcesPage() {
             </div>
           </div>
           <div className="ds-val-item">
+            <div className="ds-val-icon">🛰️</div>
+            <div>
+              <div className="ds-val-title">Satellite Turbidity Integration</div>
+              <div className="ds-val-text">
+                MODIS Aqua true-colour pixel sampling now feeds directly into scoring. The turbidity index (0–100) from RGB ratios
+                is applied as a satAdj factor: high turbidity (&gt;60) suppresses scores, low turbidity (&lt;20) provides a small clarity bonus.
+                Confidence is age-weighted — full trust at 0 days old, zero trust at 3+ days.
+              </div>
+            </div>
+          </div>
+          <div className="ds-val-item">
             <div className="ds-val-icon">🟤</div>
             <div>
               <div className="ds-val-title">Plume Reach Model</div>
               <div className="ds-val-text">
-                Motumahanga&apos;s plume-reach model was calibrated after Feb 2026 satellite imagery showed dirty plume extending past the island 3+ days after heavy rain.
+                Motumahanga's plume-reach model was calibrated after Feb 2026 satellite imagery showed dirty plume extending past the island 3+ days after heavy rain.
                 A weighted rain history with 4-day half-life drives a 0–100% plume factor. At 100%, the island is scored like an inshore spot.
               </div>
             </div>
@@ -2055,7 +2124,6 @@ function DataSourcesPage() {
               <div className="ds-val-text">
                 30mm of rain leaves Nga Motu Inshore &quot;Very Dirty&quot; for 3+ days, &quot;Dirty&quot; for 7+ days, and &quot;Clearing&quot; after ~10 days.
                 Half-life ranges from 2 days (Opunake, low papa) to 11+ days (high-papa inshore sites).
-                Penalty multiplier ranges from 1.6× (Opunake) to 3.0× (inshore high-papa).
               </div>
             </div>
           </div>
@@ -2066,17 +2134,6 @@ function DataSourcesPage() {
               <div className="ds-val-text">
                 The model supports user-logged observations. When you log actual visibility against the model score, a per-spot
                 bias multiplier (0.6–1.4×) is computed from your most recent 20 observations using exponential weighting.
-                This progressively corrects the model for local conditions not captured in the data.
-              </div>
-            </div>
-          </div>
-          <div className="ds-val-item">
-            <div className="ds-val-icon">⏱️</div>
-            <div>
-              <div className="ds-val-title">Data Freshness</div>
-              <div className="ds-val-text">
-                Weather &amp; marine data updates hourly from Open-Meteo. RTOFS ocean current is a 3-hourly forecast (may lag 6–12h).
-                GIBS satellite imagery searches back up to 10 days for cloud-free scenes.
               </div>
             </div>
           </div>
@@ -2085,10 +2142,8 @@ function DataSourcesPage() {
             <div>
               <div className="ds-val-title">Known Limitations</div>
               <div className="ds-val-text">
-                Tide data is not currently sourced from a tidal model — the tide_h field is always 0 in the base conditions.
-                Tide sensitivity parameters exist per spot but are not yet driven by real data.
-                Wind now falls back to the API&apos;s &quot;current&quot; real-time field when the hourly grid value is null (shown with ⚡),
-                but if both are null the reading will still show 0 kph with a ⚠️ warning.
+                Tide data is not currently sourced from a tidal model — the tide_h field is always 0.
+                Satellite turbidity only affects today's score (not the 7-day forecast).
                 Always cross-check with Port Taranaki Sea Conditions or MetService before making dive decisions.
               </div>
             </div>
@@ -2096,7 +2151,6 @@ function DataSourcesPage() {
         </div>
       </div>
 
-      {/* Quick Reference Links */}
       <div className="ds-section">
         <h3 className="ds-section-title">🔗 Cross-Check Resources</h3>
         <p className="ds-section-desc">Use these independent sources to verify model outputs before heading out.</p>
@@ -2119,10 +2173,9 @@ function DataSourcesPage() {
         </div>
       </div>
 
-      {/* API Endpoint Examples */}
       <div className="ds-section">
         <h3 className="ds-section-title">🧪 Example API Calls</h3>
-        <p className="ds-section-desc">These are the actual API endpoints the app queries. Open in a browser to inspect raw data and verify wind readings.</p>
+        <p className="ds-section-desc">These are the actual API endpoints the app queries. Open in a browser to inspect raw data.</p>
         <div className="ds-api-examples">
           {spots.slice(0, 3).map((s, i) => {
             const wLat = s.weather_lat ?? s.lat;
@@ -2157,7 +2210,9 @@ function DataSourcesPage() {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ── Share helpers ──────────────────────────────────────────────────────────────
+// Share helpers
+// ══════════════════════════════════════════════════════════════════════════════
+
 function getShareText(spotDataMap) {
   const entries = Object.entries(spotDataMap).filter(([,d]) => d?.score != null);
   if (!entries.length) return "Check out the Taranaki Viz Forecast — spearfishing visibility predictions for the Taranaki coast! 🐟🤿";
@@ -2216,7 +2271,7 @@ function ShareButtons({ spotDataMap, compact }) {
   );
 }
 
-// ── Welcome banner for new visitors ───────────────────────────────────────────
+// ── Welcome banner ─────────────────────────────────────────────────────────────
 function WelcomeBanner({ onDismiss, onSetName, diverName }) {
   const [name, setName] = useState(diverName || "");
   const [dismissed, setDismissed] = useState(false);
@@ -2230,12 +2285,12 @@ function WelcomeBanner({ onDismiss, onSetName, diverName }) {
         <h2 className="welcome-title">Welcome to the Taranaki Viz Forecast</h2>
         <p className="welcome-desc">
           Real-time spearfishing visibility predictions for 6 spots around the Taranaki coast.
-          Scores combine swell, wind, rain history, ocean currents, and SST data.
+          Scores combine swell, wind, rain history, ocean currents, SST, and satellite turbidity data.
         </p>
         <div className="welcome-features">
           <div className="wf-item"><span className="wf-icon">📊</span><span>Live conditions & 7-day forecasts per spot</span></div>
           <div className="wf-item"><span className="wf-icon">🎯</span><span>Best dive day recommendation</span></div>
-          <div className="wf-item"><span className="wf-icon">📝</span><span>Log your dives to improve predictions</span></div>
+          <div className="wf-item"><span className="wf-icon">🛰️</span><span>Satellite turbidity integrated into scores</span></div>
           <div className="wf-item"><span className="wf-icon">🤝</span><span>Community-calibrated model — more logs = better accuracy</span></div>
         </div>
         <div className="welcome-join">
@@ -2249,7 +2304,7 @@ function WelcomeBanner({ onDismiss, onSetName, diverName }) {
   );
 }
 
-// ── Community log panel (per-spot or global) ──────────────────────────────────
+// ── Community log panel ───────────────────────────────────────────────────────
 function CommunityLogPanel({ logs, logStatus, spotName }) {
   const [expanded, setExpanded] = useState(false);
   const spotLogs = spotName ? logs.filter(e => e.spot === spotName).slice(0, expanded ? 20 : 4) : logs.slice(0, expanded ? 50 : 8);
@@ -2289,7 +2344,7 @@ function CommunityLogPanel({ logs, logStatus, spotName }) {
   );
 }
 
-// ── Community stats summary ───────────────────────────────────────────────────
+// ── Community stats ───────────────────────────────────────────────────────────
 function CommunityStats({ logs, logStatus }) {
   if (logStatus !== "ok" || logs.length === 0) return null;
   const totalDivers = new Set(logs.map(l => l.diver_name)).size;
@@ -2305,7 +2360,7 @@ function CommunityStats({ logs, logStatus }) {
   );
 }
 
-// ── Growth nudge + share panel ────────────────────────────────────────────────
+// ── Growth nudge ──────────────────────────────────────────────────────────────
 function GrowthNudge({ logs, spotDataMap }) {
   const totalDivers = new Set(logs.map(l => l.diver_name)).size;
   const totalLogs = logs.length;
@@ -2328,7 +2383,8 @@ function GrowthNudge({ logs, spotDataMap }) {
   );
 }
 
-// APP — single data source, everything flows down
+// ══════════════════════════════════════════════════════════════════════════════
+// APP ROOT
 // ══════════════════════════════════════════════════════════════════════════════
 
 export default function App() {
@@ -2345,26 +2401,25 @@ export default function App() {
     try { return !sessionStorage.getItem("taranaki_welcomed"); } catch { return true; }
   });
 
-  // Community logs (Supabase)
   const { logs: communityLogs, logStatus, addLog: addCommunityLog, refresh: refreshLogs, isConfigured } = useCommunityLogs();
 
-  // Merge local + community logs for bias calculation
   const allLogs = useMemo(() => {
     const ids = new Set(communityLogs.map(l => l.id));
     const localOnly = logEntries.filter(l => !ids.has(l.id));
     return [...communityLogs, ...localOnly];
   }, [communityLogs, logEntries]);
 
-  // ── Consolidated data hook — single source of truth ─────────────────────
+  // CHANGE 5: Destructure satData and satStatus from hook
   const {
     spotDataMap,
     loading,
     errors,
     currentData,
     currentStatus,
+    satData,
+    satStatus,
   } = useAllSpotsData(logEntries);
 
-  // Derive spot scores for the map
   const spotScores = useMemo(() => {
     const s = {};
     for (const [name, data] of Object.entries(spotDataMap)) {
@@ -2468,7 +2523,6 @@ export default function App() {
         .fday-score { font-size: 0.6rem; font-family: 'Space Mono', monospace; font-weight: 700; }
         .fday-swell { font-size: 0.5rem; color: #2a4a5a; }
 
-        /* Wind forecast bar */
         .wind-forecast-bar { margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid rgba(255,255,255,0.04); }
         .wind-forecast-label { font-size: 0.58rem; font-family: 'Space Mono', monospace; color: #2a5a6a; letter-spacing: 0.15em; margin-bottom: 0.5rem; }
         .wind-forecast-days { display: flex; gap: 0.3rem; height: 100px; align-items: flex-end; }
@@ -2505,13 +2559,11 @@ export default function App() {
         .info-panel strong { color: #6ab4c8; }
         footer { text-align: center; margin-top: 3rem; font-size: 0.7rem; color: #1e3a4a; font-family: 'Space Mono', monospace; }
 
-        /* Page Navigation */
         .page-nav { display: flex; gap: 0.5rem; justify-content: center; margin: 0 auto 1.5rem; max-width: 500px; }
         .page-nav-btn { flex: 1; padding: 0.7rem 1rem; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; color: #4a7a8a; font-family: 'Syne', sans-serif; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.2s; letter-spacing: 0.02em; }
         .page-nav-btn:hover { background: rgba(0,180,140,0.06); border-color: rgba(0,180,140,0.2); color: #6ab4c8; }
         .page-nav-btn.active { background: rgba(0,180,140,0.1); border-color: rgba(0,229,160,0.3); color: #00e5a0; box-shadow: 0 0 20px rgba(0,229,160,0.08); }
 
-        /* Data Sources Page */
         .ds-page { animation: fadeIn 0.4s ease; }
         .ds-hero { text-align: center; margin-bottom: 2rem; padding: 1.5rem 0; }
         .ds-hero-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
@@ -2625,12 +2677,10 @@ export default function App() {
         .modal-save:hover { background: #1f5a46; }
         .modal-save:disabled { opacity: 0.5; cursor: wait; }
 
-        /* Share buttons — compact */
         .share-compact { display: flex; gap: 0.4rem; justify-content: center; margin-top: 0.8rem; position: relative; z-index: 1; }
         .share-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 1px solid rgba(0,180,140,0.2); background: rgba(0,180,140,0.06); color: #4a9a8a; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
         .share-btn:hover { background: rgba(0,180,140,0.15); border-color: rgba(0,180,140,0.4); color: #00e5a0; transform: scale(1.1); }
         .share-btn.share-whatsapp:hover { background: rgba(37,211,102,0.15); border-color: rgba(37,211,102,0.4); color: #25d366; }
-        /* Share panel — full */
         .share-panel { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(0,180,140,0.1); }
         .share-title { font-size: 0.6rem; font-family: 'Space Mono',monospace; color: #2a6a5a; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 0.2rem; }
         .share-subtitle { font-size: 0.72rem; color: #4a7a8a; margin-bottom: 0.7rem; }
@@ -2640,7 +2690,6 @@ export default function App() {
         .share-btn-full.share-whatsapp { border-color: rgba(37,211,102,0.25); background: rgba(37,211,102,0.06); }
         .share-btn-full.share-whatsapp:hover { background: rgba(37,211,102,0.15); color: #25d366; }
 
-        /* Welcome banner */
         .welcome-banner { position: relative; margin-bottom: 2rem; padding: 2rem; background: linear-gradient(135deg, rgba(0,40,60,0.95), rgba(0,20,35,0.95)); border: 1px solid rgba(0,180,140,0.15); border-radius: 16px; overflow: hidden; }
         .welcome-glow { position: absolute; top: -50%; left: -20%; width: 140%; height: 200%; background: radial-gradient(ellipse at 30% 20%, rgba(0,229,160,0.06) 0%, transparent 60%); pointer-events: none; }
         .welcome-content { position: relative; z-index: 1; }
@@ -2659,194 +2708,148 @@ export default function App() {
         .welcome-hint { font-size: 0.65rem; color: #2a5a6a; margin-top: 0.6rem; }
         @media(max-width:500px) { .welcome-features { grid-template-columns: 1fr; } .welcome-join { flex-direction: column; } }
 
-        /* Setup banner */
         .setup-banner { display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1.1rem; margin-bottom: 1.2rem; background: rgba(240,192,64,0.07); border: 1px solid rgba(240,192,64,0.25); border-left: 3px solid #f0c040; border-radius: 8px; font-size: 0.8rem; color: #9ab0c0; }
         .setup-banner strong { color: #f0c040; }
 
-        /* Community stats */
         .community-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 0.6rem; margin-bottom: 1.5rem; }
         .cs-item { background: rgba(0,180,140,0.05); border: 1px solid rgba(0,180,140,0.12); border-radius: 10px; padding: 0.8rem 1rem; text-align: center; }
         .cs-val { display: block; font-family: 'Space Mono', monospace; font-size: 1.4rem; font-weight: 700; color: #00e5a0; }
         .cs-key { display: block; font-size: 0.6rem; color: #3a6a7a; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 0.2rem; }
         @media(max-width:600px) { .community-stats { grid-template-columns: repeat(2,1fr); } }
 
-        /* Community log panel */
-        .community-panel { margin: 0.8rem 0; padding: 0.8rem 0.9rem; background: rgba(0,30,60,0.3); border: 1px solid rgba(0,140,180,0.12); border-radius: 8px; }
-        .community-panel.unconfigured { border-color: rgba(240,192,64,0.15); }
-        .cp-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.3rem; }
-        .cp-title { font-size: 0.58rem; font-family: 'Space Mono',monospace; color: #2a6a8a; text-transform: uppercase; letter-spacing: 0.1em; }
-        .cp-bias { font-size: 0.62rem; font-family: 'Space Mono',monospace; }
-        .cp-unconfigured { font-size: 0.72rem; color: #f0c040; opacity: 0.7; }
-        .cp-row { display: flex; gap: 0.5rem; align-items: center; padding: 0.25rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); flex-wrap: wrap; }
+        .community-panel { margin: 0.8rem 0; padding: 0.8rem 0.9rem; background: rgba(0,30,60,0.3); border: 1px solid rgba(0,100,160,0.15); border-radius: 8px; }
+        .community-panel.unconfigured { opacity: 0.6; }
+        .cp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.3rem; }
+        .cp-title { font-size: 0.58rem; font-family: 'Space Mono', monospace; color: #2a5a7a; text-transform: uppercase; letter-spacing: 0.1em; }
+        .cp-bias { font-size: 0.62rem; font-family: 'Space Mono', monospace; }
+        .cp-row { display: flex; gap: 0.5rem; align-items: center; font-size: 0.7rem; padding: 0.2rem 0; border-bottom: 1px solid #081825; flex-wrap: wrap; }
         .cp-row:last-child { border-bottom: none; }
-        .cp-diver { color: #6ab4c8; font-weight: 700; font-size: 0.72rem; min-width: 80px; }
-        .cp-date { color: #3a6070; font-family: 'Space Mono',monospace; font-size: 0.62rem; min-width: 72px; }
-        .cp-vis { font-weight: 700; font-family: 'Space Mono',monospace; font-size: 0.72rem; }
-        .cp-tide { color: #4a7a8a; font-size: 0.62rem; }
-        .cp-model { color: #2a4a5a; font-size: 0.62rem; font-family: 'Space Mono',monospace; }
-        .cp-note { cursor: pointer; font-size: 0.75rem; }
-        .cp-more { display: block; width: 100%; margin-top: 0.5rem; padding: 0.3rem; background: transparent; border: 1px solid #1a3a4a; border-radius: 5px; color: #3a6a7a; font-size: 0.65rem; cursor: pointer; font-family: 'Syne',sans-serif; }
-        .cp-more:hover { border-color: #2a5a6a; color: #5a9aaa; }
+        .cp-diver { color: #6ab4c8; font-weight: 700; min-width: 80px; }
+        .cp-date { color: #3a5a7a; font-family: 'Space Mono', monospace; font-size: 0.62rem; }
+        .cp-vis { font-weight: 700; font-family: 'Space Mono', monospace; }
+        .cp-tide { color: #3a6a7a; font-size: 0.65rem; }
+        .cp-model { color: #2a4a6a; font-size: 0.62rem; font-family: 'Space Mono', monospace; }
+        .cp-note { cursor: pointer; }
+        .cp-more { display: block; width: 100%; text-align: center; padding: 0.4rem; margin-top: 0.4rem; background: none; border: 1px solid rgba(0,100,160,0.15); border-radius: 5px; color: #3a6a8a; font-size: 0.65rem; cursor: pointer; font-family: 'Syne',sans-serif; }
+        .cp-more:hover { background: rgba(0,100,160,0.08); color: #6ab4c8; }
 
-        /* Growth nudge */
-        .growth-nudge { margin: 2rem 0; padding: 1.4rem 1.6rem; background: linear-gradient(135deg, rgba(0,30,50,0.6), rgba(0,20,40,0.6)); border: 1px solid rgba(0,180,140,0.1); border-radius: 14px; }
+        .growth-nudge { margin: 2rem 0; padding: 1.3rem 1.5rem; background: linear-gradient(135deg, rgba(0,40,60,0.6), rgba(0,20,40,0.6)); border: 1px solid rgba(0,180,140,0.12); border-radius: 14px; }
         .gn-header { margin-bottom: 0.8rem; }
-        .gn-title { font-size: 0.6rem; font-family: 'Space Mono',monospace; color: #2a6a7a; letter-spacing: 0.15em; text-transform: uppercase; }
-        .gn-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 0.7rem; margin-bottom: 1rem; }
-        .gn-stat { text-align: center; padding: 0.6rem; background: rgba(0,180,140,0.04); border: 1px solid rgba(0,180,140,0.08); border-radius: 10px; }
-        .gn-stat-val { font-family: 'Space Mono',monospace; font-size: 1.3rem; font-weight: 700; color: #00b4d8; }
-        .gn-stat-label { font-size: 0.58rem; color: #3a6a7a; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.15rem; }
-        .gn-meter { margin-bottom: 0.2rem; }
-        .gn-meter-label { font-size: 0.7rem; color: #6a9aaa; margin-bottom: 0.35rem; font-weight: 600; }
-        .gn-meter-bar { height: 6px; background: rgba(0,0,0,0.3); border-radius: 3px; overflow: hidden; }
-        .gn-meter-fill { height: 100%; background: linear-gradient(90deg, #00e5a0, #00b4d8); border-radius: 3px; transition: width 1.5s ease; min-width: 4px; }
-        .gn-meter-hint { font-size: 0.65rem; color: #3a6a7a; margin-top: 0.3rem; }
-        .footer-share { margin-top: 0.8rem; }
+        .gn-title { font-size: 0.78rem; font-weight: 700; color: #4a9a8a; font-family: 'Space Mono', monospace; text-transform: uppercase; letter-spacing: 0.1em; }
+        .gn-stats { display: flex; gap: 1rem; margin-bottom: 1rem; }
+        .gn-stat { text-align: center; flex: 1; }
+        .gn-stat-val { font-family: 'Space Mono', monospace; font-size: 1.6rem; font-weight: 700; color: #00e5a0; }
+        .gn-stat-label { font-size: 0.6rem; color: #3a6a7a; text-transform: uppercase; }
+        .gn-meter { margin-bottom: 0.5rem; }
+        .gn-meter-label { font-size: 0.72rem; color: #4a7a8a; margin-bottom: 0.3rem; }
+        .gn-meter-bar { height: 4px; background: #0a1e2e; border-radius: 2px; overflow: hidden; margin-bottom: 0.3rem; }
+        .gn-meter-fill { height: 100%; background: linear-gradient(90deg, #00e5a0, #00b4d8); border-radius: 2px; transition: width 1s ease; }
+        .gn-meter-hint { font-size: 0.65rem; color: #3a6070; }
 
-        .spot-map-wrap { margin-bottom: 1.5rem; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.07); }
-        .spot-map-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.4rem; padding: 0.45rem 0.8rem; background: #040d14; border-bottom: 1px solid rgba(255,255,255,0.04); }
-        .spot-map-label { font-size: 0.58rem; font-family: 'Space Mono', monospace; color: #2a5a6a; letter-spacing: 0.15em; }
-        .spot-map-layer-btns { display: flex; gap: 0.3rem; }
-        .map-layer-btn { font-size: 0.65rem; padding: 0.25rem 0.65rem; background: #0a1e2e; border: 1px solid #1a3a4a; border-radius: 5px; color: #4a7a8a; cursor: pointer; font-family: 'Space Mono', monospace; transition: all 0.15s; display: flex; flex-direction: column; align-items: center; }
-        .map-layer-btn:hover { background: #0f2a3a; color: #6ab4c8; }
-        .map-layer-btn.active { background: #0f2a3a; border-color: #2a6a8a; color: #6ab4c8; }
-        .spot-map { height: 400px; width: 100%; }
-        .spot-map-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem; padding: 0.4rem 0.8rem; background: #040d14; border-top: 1px solid rgba(255,255,255,0.03); }
-        .spot-map-date-info { font-size: 0.62rem; color: #4a8a9a; font-family: 'Space Mono', monospace; }
-        .spot-map-hint { font-size: 0.58rem; color: #1e3a4a; font-family: 'Space Mono', monospace; }
-        .spot-map .leaflet-popup-content-wrapper { background: #0a1a26; border: 1px solid #1a3a4a; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-        .spot-map .leaflet-popup-content { margin: 8px 10px; }
-        .spot-map .leaflet-popup-tip { background: #0a1a26; }
-        .spot-map .leaflet-popup-close-button { color: #4a7a8a !important; }
-        .spot-map .leaflet-control-zoom a { background: #0a1a26; color: #6ab4c8; border-color: #1a3a4a; }
-        .spot-map .leaflet-control-zoom a:hover { background: #0f2a3a; }
-
-        @media (max-width: 500px) {
-          .grid { grid-template-columns: 1fr; }
-          .best-day-panel { flex-direction: column; }
-          .conditions { grid-template-columns: 1fr 1fr; }
-          .spot-map { height: 280px; }
-          .spot-map-date-info { font-size: 0.55rem; }
-          .page-nav { flex-direction: column; gap: 0.4rem; }
-          .ds-weights-grid { grid-template-columns: repeat(2, 1fr); }
-          .ds-links-grid { grid-template-columns: 1fr; }
-          .ds-coords-table { font-size: 0.65rem; }
-          .ds-coords-table th, .ds-coords-table td { padding: 0.35rem 0.4rem; }
-          .ds-source-header { flex-direction: column; gap: 0.3rem; align-items: flex-start; }
-        }
+        .spot-map-wrap { margin-bottom: 2rem; border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,0.07); background: #081520; }
+        .spot-map-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0.7rem 1rem; background: rgba(0,20,40,0.8); border-bottom: 1px solid rgba(255,255,255,0.06); flex-wrap: wrap; gap: 0.5rem; }
+        .spot-map-label { font-size: 0.6rem; font-family: 'Space Mono', monospace; color: #3a6a7a; text-transform: uppercase; letter-spacing: 0.15em; }
+        .spot-map-layer-btns { display: flex; gap: 0.4rem; }
+        .map-layer-btn { padding: 0.35rem 0.7rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; color: #4a7a8a; font-family: 'Syne', sans-serif; font-size: 0.72rem; cursor: pointer; transition: all 0.2s; text-align: center; }
+        .map-layer-btn.active { background: rgba(0,180,140,0.12); border-color: rgba(0,229,160,0.3); color: #00e5a0; }
+        .spot-map { height: 340px; }
+        .spot-map-footer { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 1rem; background: rgba(0,10,20,0.6); border-top: 1px solid rgba(255,255,255,0.04); font-size: 0.68rem; flex-wrap: wrap; gap: 0.3rem; }
+        .spot-map-date-info { color: #4a7a8a; }
+        .spot-map-hint { color: #2a4a5a; font-size: 0.6rem; }
+        .current-widget { display: flex; align-items: center; }
+        .layer-btn-date { display: block; font-size: 0.5rem; opacity: 0.75; }
       `}</style>
 
       <div className="app">
-        {showWelcome && (
-          <WelcomeBanner onDismiss={handleWelcomeDismiss} onSetName={handleSetName} diverName={diverName} />
-        )}
-
         <header>
           <div className="fish-bg">
-            <div className="wave-line" /><div className="wave-line" /><div className="wave-line" />
+            <div className="wave-line" />
+            <div className="wave-line" />
+            <div className="wave-line" />
           </div>
           <h1>🐟 Taranaki Viz Forecast</h1>
-          <div className="subtitle">Spearfishing Visibility Conditions — Community Edition</div>
-          <div className="date">{now}</div>
+          <p className="subtitle">Spearfishing Visibility Predictions</p>
+          <p className="date">{now}</p>
           <ShareButtons spotDataMap={spotDataMap} compact={true} />
         </header>
 
-        {/* Page Navigation */}
-        <nav className="page-nav">
-          <button
-            className={`page-nav-btn ${activePage === "forecast" ? "active" : ""}`}
-            onClick={() => setActivePage("forecast")}
-          >
-            🌊 Forecast
-          </button>
-          <button
-            className={`page-nav-btn ${activePage === "datasources" ? "active" : ""}`}
-            onClick={() => setActivePage("datasources")}
-          >
-            📡 Data Sources & Validation
-          </button>
-        </nav>
+        <div className="page-nav">
+          <button className={`page-nav-btn ${activePage === "forecast" ? "active" : ""}`}
+            onClick={() => setActivePage("forecast")}>🤿 Forecast</button>
+          <button className={`page-nav-btn ${activePage === "data" ? "active" : ""}`}
+            onClick={() => setActivePage("data")}>📡 Data Sources</button>
+        </div>
 
-        {activePage === "forecast" && (
+        {activePage === "data" ? (
+          <DataSourcesPage />
+        ) : (
           <>
-        <p className="tagline">
-          Per-spot scoring with NW push, ocean current, SST upwelling, papa risk & river runoff.
-          Log your dives to help calibrate the model for everyone. 🤝
-        </p>
+            {showWelcome && (
+              <WelcomeBanner
+                onDismiss={handleWelcomeDismiss}
+                onSetName={handleSetName}
+                diverName={diverName}
+              />
+            )}
 
-        {!isConfigured && (
-          <div className="setup-banner">
-            <span>⚙️</span>
-            <div><strong>Supabase not configured</strong> — community logging disabled. Scores and forecasts still work.</div>
-          </div>
-        )}
-        <CommunityStats logs={communityLogs} logStatus={logStatus} />
-
-        <SpotMap
-          spotScores={spotScores}
-          currentData={currentData}
-          currentStatus={currentStatus}
-        />
-
-        {/* Data source connection status */}
-        <div className="data-status-bar">
-          <span className="data-status-label">📡 Data</span>
-          {(() => {
-            // Wind status: check first spot for wind data
-            const anySpot = Object.values(spotDataMap)[0];
-            const windSrc = anySpot?.cond?.wind_source;
-            const windSpd = anySpot?.cond?.wind_spd ?? 0;
-            const windOk = windSrc === "hourly" || (windSrc === "current" && windSpd > 0);
-            return (
-              <span className={`data-status-pill ${windOk ? "ok" : windSrc === "current" ? "warn" : "fail"}`}>
-                💨 Wind: {windOk ? `${windSpd.toFixed(0)}kph (${windSrc})` : windSrc === "none" ? "NO DATA ⚠️" : "loading…"}
+            {/* Satellite status pill */}
+            <div className="data-status-bar">
+              <span className="data-status-label">Data</span>
+              <span className={`data-status-pill ${loading ? "wait" : "ok"}`}>
+                {loading ? "⏳ Loading spots…" : "✓ Spots"}
               </span>
-            );
-          })()}
-          <span className={`data-status-pill ${currentStatus === "ok" ? "ok" : currentStatus === "error" ? "fail" : "wait"}`}>
-            🌊 RTOFS: {currentStatus === "ok" ? `${currentData?.speed?.toFixed(1) ?? "?"}kt ${currentData?.dirLabel ?? ""}` : currentStatus === "error" ? "FAIL" : "…"}
-          </span>
-        </div>
+              <span className={`data-status-pill ${currentStatus === "ok" ? "ok" : currentStatus === "error" ? "fail" : "wait"}`}>
+                {currentStatus === "ok" ? "✓ Current" : currentStatus === "error" ? "✗ Current" : "⏳ Current"}
+              </span>
+              <span className={`data-status-pill ${satStatus === "ok" ? "ok" : satStatus === "error" ? "warn" : "wait"}`}>
+                {satStatus === "ok" ? `✓ Satellite (${Object.keys(satData).length} spots)` : satStatus === "error" ? "⚠ Satellite" : "⏳ Satellite…"}
+              </span>
+            </div>
 
-        <AdvicePanel spotDataMap={spotDataMap} />
-        <BestDayPanel spotDataMap={spotDataMap} />
+            <AdvicePanel spotDataMap={spotDataMap} />
+            <BestDayPanel spotDataMap={spotDataMap} />
+            <CommunityStats logs={allLogs} logStatus={logStatus} />
 
-        <div className="grid">
-          {SPOTS.map(spot => (
-            <SpotCard
-              key={spot.name}
-              spot={spot}
-              data={spotDataMap[spot.name]}
-              error={errors[spot.name]}
+            <SpotMap
+              spotScores={spotScores}
               currentData={currentData}
-              logEntries={logEntries}
-              onLogUpdate={handleLogUpdate}
-              communityLogs={communityLogs}
-              logStatus={logStatus}
-              onCommunitySave={handleCommunitySave}
-              diverName={diverName}
-              isConfigured={isConfigured}
+              currentStatus={currentStatus}
             />
-          ))}
-        </div>
 
-        {logStatus === "ok" && <GrowthNudge logs={communityLogs} spotDataMap={spotDataMap} />}
+            <div className="grid">
+              {SPOTS.map(spot => (
+                <SpotCard
+                  key={spot.name}
+                  spot={spot}
+                  data={spotDataMap[spot.name]}
+                  error={errors[spot.name]}
+                  currentData={currentData}
+                  logEntries={logEntries}
+                  onLogUpdate={handleLogUpdate}
+                  communityLogs={allLogs}
+                  logStatus={logStatus}
+                  onCommunitySave={handleCommunitySave}
+                  diverName={diverName}
+                  isConfigured={isConfigured}
+                />
+              ))}
+            </div>
 
-        <Legend />
+            <Legend />
+            <GrowthNudge logs={allLogs} spotDataMap={spotDataMap} />
 
-        <div className="info-panel">
-          <strong>How scoring works:</strong> Each spot is scored individually using swell height + period, wind speed/direction, ocean current, sea surface temperature (cold SST = upwelling = murky), and a <strong>NW wind push</strong> bonus. Rain history uses <strong>14 days of weighted decay</strong> — calibrated Feb 2026 against CawthronEye observations. 30mm rain leaves Nga Motu Inshore Very Dirty for 3+ days, Dirty for 7+ days, and only Clearing after ~10 days. Half-life ranges from 2 days (Opunake) to 11 days (high-papa inshore). Penalty multiplier 1.6× (Opunake) to 3.0× (inshore) amplifies each rain event&apos;s impact. Swell history uses <strong>7 days of weighted decay</strong>. A <strong>Recovery bonus</strong> (up to +12pts) rewards consecutive calm+dry days, reflecting how visibility gradually builds back after a dirty spell. Each spot has modifiers for papa rock risk, river impact, NW push sensitivity, and southerly bight exposure. <strong>Motumahanga (Saddleback Is.)</strong> has a <strong>plume-reach model</strong> — when rain load is high enough, the offshore buffer is progressively overridden and the island is scored like an inshore spot. Calibrated Feb 2026 against CawthronEye observation of the plume exceeding the island. Always check beach cameras and assess conditions on site before entering the water.
-        </div>
+            <div className="info-panel">
+              <strong>How it works:</strong> Scores combine swell height/period, wind speed/direction, 14-day rain history,
+              ocean current direction, sea surface temperature, and now <strong>satellite turbidity</strong> from MODIS Aqua imagery.
+              Each spot has calibrated parameters for papa rock risk, river runoff, NW push, and swell exposure.
+              Log your dives to build per-spot bias correction over time.
+            </div>
+
+            <footer>
+              Taranaki Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Supabase · Built for Taranaki divers 🐟
+            </footer>
           </>
         )}
-
-        <footer>
-          Data: Open-Meteo · Marine API · NOAA RTOFS · Updates hourly<br/>
-          Guidance only — always dive with a buddy and assess conditions on site
-          <div className="footer-share"><ShareButtons spotDataMap={spotDataMap} compact={true} /></div>
-        </footer>
-
-        {activePage === "datasources" && <DataSourcesPage />}
       </div>
     </>
   );
