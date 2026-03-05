@@ -363,6 +363,46 @@ function latLonToTilePx(lat, lon, z) {
   };
 }
 
+// ── Pixel quality classification ─────────────────────────────────────────────
+// Works for BOTH TrueColor (R=red vis, G=green vis, B=blue vis) and
+// Bands721 (R=SWIR band7 2.1µm, G=NIR band2 0.86µm, B=red band1 0.65µm).
+// Cloud/glint detection is band-agnostic (brightness + saturation).
+function classifyPixel(r, g, b, a) {
+  if (a < 10) return "transparent";
+  const brightness = (r + g + b) / 3;
+  const maxCh = Math.max(r, g, b);
+  const minCh = Math.min(r, g, b);
+  const saturation = maxCh > 0 ? (maxCh - minCh) / maxCh : 0;
+  // Cloud: very bright AND low saturation (white/grey in both composites)
+  if (brightness > 195 && saturation < 0.12) return "cloud";
+  // Sun glint: extremely bright regardless of colour
+  if (brightness > 215) return "glint";
+  // Land in TrueColor: green/brown with low blue
+  // Land in Bands721: vegetation = very high NIR (green channel), low blue
+  if (g > 160 && b < 80) return "land";               // vegetation (NIR-bright in B721)
+  if (r > b * 1.5 && g > b * 1.2 && b < 90) return "land"; // bare/brown land in TC
+  return "water";
+}
+
+// Normalised ocean turbidity index from TrueColor pixel — illumination-independent
+// Returns 0 (clear deep blue) → 100 (very turbid brown/green)
+function calcTurbidity(r, g, b) {
+  const total = r + g + b;
+  if (total < 10) return null;
+  // Normalised band fractions — divide out overall brightness/illumination
+  const rn = r / total;
+  const gn = g / total;
+  const bn = b / total;
+  // Clear offshore ocean: bn ≈ 0.40–0.50 (blue dominates)
+  // Turbid river plume: rn + gn high (0.55–0.70), bn low (0.25–0.35)
+  // Sediment index: weighted red+green vs blue ratio
+  const sedimentIdx = (rn * 0.65 + gn * 0.35) / Math.max(0.01, bn);
+  // Blue bonus: extra clear-water credit when blue fraction is high
+  const bluenessBonus = Math.max(0, bn - 0.38) * 80;
+  const raw = sedimentIdx * 55 - bluenessBonus;
+  return Math.min(100, Math.max(0, Math.round(raw)));
+}
+
 async function sampleGibsTile(layer, date, zoom, fmt, spots) {
   const results = {};
   const tiles = {};
@@ -383,7 +423,9 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
       "/" + zoom + "/" + tile.tileY + "/" + tile.tileX + "." + fmt;
 
     try {
-      const rgba = await new Promise((resolve, reject) => {
+      // Sample a 5×5 neighbourhood (radius=2) around the spot pixel to reduce
+      // single-pixel noise and give cloud masking more pixels to work with
+      const sampleNeighbourhood = await new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.onload = () => {
@@ -391,9 +433,17 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
           c.width = 256; c.height = 256;
           const ctx = c.getContext("2d");
           ctx.drawImage(img, 0, 0);
-          resolve((px, py) => {
-            const d = ctx.getImageData(px, py, 1, 1).data;
-            return [d[0], d[1], d[2], d[3]];
+          resolve((px, py, radius = 2) => {
+            const pixels = [];
+            for (let dy = -radius; dy <= radius; dy++) {
+              for (let dx = -radius; dx <= radius; dx++) {
+                const x = Math.max(0, Math.min(255, px + dx));
+                const y = Math.max(0, Math.min(255, py + dy));
+                const d = ctx.getImageData(x, y, 1, 1).data;
+                pixels.push([d[0], d[1], d[2], d[3]]);
+              }
+            }
+            return pixels;
           });
         };
         img.onerror = reject;
@@ -402,15 +452,27 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
 
       for (const spot of tile.spots) {
         try {
-          const [r, g, b, a] = rgba(spot.pixelX, spot.pixelY);
-          if (a < 10) continue;
-          const blueness  = b / Math.max(1, r + g + b);
-          const brownness = (r * 0.6 + g * 0.3) / Math.max(1, b);
-          const turb = Math.min(100, Math.max(0, Math.round(brownness * 60 - blueness * 30 + 10)));
-          results[spot.name] = {
-            r, g, b,
-            turbidity: layer.includes("TrueColor") ? turb : null,
-          };
+          const allPixels = sampleNeighbourhood(spot.pixelX, spot.pixelY, 2);
+
+          // Keep only valid water pixels — reject cloud, glint, land, transparent
+          const waterPixels = allPixels.filter(([r, g, b, a]) =>
+            classifyPixel(r, g, b, a) === "water"
+          );
+
+          if (waterPixels.length === 0) {
+            console.warn(`[Satellite] ${spot.name} ${date}: all ${allPixels.length} pixels invalid (cloud/glint/land) — skipping`);
+            continue;
+          }
+
+          // Use median-brightness water pixel to avoid outliers
+          waterPixels.sort((a, b) => (a[0]+a[1]+a[2]) - (b[0]+b[1]+b[2]));
+          const [r, g, b] = waterPixels[Math.floor(waterPixels.length / 2)];
+
+          const turbidity = layer.includes("TrueColor") ? calcTurbidity(r, g, b) : null;
+
+          console.log(`[Satellite] ${spot.name} ${date}: rgb(${r},${g},${b}) turbidity=${turbidity} (${waterPixels.length}/${allPixels.length} valid px)`);
+
+          results[spot.name] = { r, g, b, turbidity };
         } catch(e) {}
       }
     } catch(e) {}
@@ -909,10 +971,12 @@ function useAllSpotsData(logEntries) {
       setSatStatus("loading");
       const satPromise = (async () => {
         try {
-          // Walk back up to 10 days to find a cloud-free MODIS Aqua tile
-          // Each probe has a 5s timeout so a hanging image can't stall the chain
+          // Walk back up to 14 days to find a cloud-free MODIS Aqua tile.
+          // Uses classifyPixel() to count valid water pixels — if >30% of sampled
+          // pixels are water (not cloud/glint/land) we consider the tile usable.
+          // Each probe has a 5s timeout so a hanging image can't stall the chain.
           let tcDate = null;
-          for (let n = 1; n <= 10; n++) {
+          for (let n = 1; n <= 14; n++) {
             const d = new Date();
             d.setDate(d.getDate() - n);
             const dateStr = d.toISOString().split("T")[0];
@@ -920,17 +984,25 @@ function useAllSpotsData(logEntries) {
               new Promise(resolve => {
                 const img = new Image();
                 img.crossOrigin = "anonymous";
+                // Probe tile centred on Taranaki coast (zoom 5, tile x=31 y=19 in WMTS coords)
                 img.src = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/5/19/31.jpg`;
                 img.onload = () => {
                   try {
                     const c = document.createElement("canvas");
-                    c.width = 32; c.height = 32;
+                    c.width = 64; c.height = 64;
                     const ctx = c.getContext("2d");
-                    ctx.drawImage(img, 0, 0, 32, 32);
-                    const px = ctx.getImageData(0, 0, 32, 32).data;
-                    const uniq = new Set();
-                    for (let i = 0; i < px.length; i += 16) uniq.add(`${px[i]},${px[i+1]},${px[i+2]}`);
-                    resolve(uniq.size > 8);
+                    ctx.drawImage(img, 0, 0, 64, 64);
+                    const data = ctx.getImageData(0, 0, 64, 64).data;
+                    let waterCount = 0, total = 0;
+                    for (let i = 0; i < data.length; i += 4) {
+                      const [r, g, b, a] = [data[i], data[i+1], data[i+2], data[i+3]];
+                      if (a < 10) continue;
+                      total++;
+                      if (classifyPixel(r, g, b, a) === "water") waterCount++;
+                    }
+                    const waterFraction = total > 0 ? waterCount / total : 0;
+                    console.log(`[Satellite probe] ${dateStr}: ${waterCount}/${total} water pixels (${(waterFraction*100).toFixed(0)}%)`);
+                    resolve(waterFraction > 0.25); // need at least 25% valid ocean pixels
                   } catch { resolve(true); }
                 };
                 img.onerror = () => resolve(false);
@@ -941,9 +1013,18 @@ function useAllSpotsData(logEntries) {
           }
           if (!tcDate) tcDate = (() => { const d = new Date(); d.setDate(d.getDate() - 3); return d.toISOString().split("T")[0]; })();
 
-          const pixels = await sampleGibsTile(
-            "MODIS_Aqua_CorrectedReflectance_TrueColor", tcDate, 9, "jpg", SPOTS
-          );
+          // Fetch both layers in parallel:
+          //   TrueColor  → display swatch shown to user (natural looking)
+          //   Bands721   → turbidity scoring (bands 7-2-1 false colour;
+          //                sediment/turbid water = bright red/magenta,
+          //                clear deep water = dark blue/black, cloud = white)
+          //                The red channel (band 7, 2.1µm SWIR) is a direct
+          //                proxy for suspended sediment — illumination-independent
+          //                and much less affected by sun glint than visible bands.
+          const [tcPixels, b721Pixels] = await Promise.all([
+            sampleGibsTile("MODIS_Aqua_CorrectedReflectance_TrueColor", tcDate, 9, "jpg", SPOTS),
+            sampleGibsTile("MODIS_Aqua_CorrectedReflectance_Bands721",   tcDate, 9, "jpg", SPOTS),
+          ]);
 
           const today = new Date();
           const imgDate = new Date(tcDate + "T00:00:00");
@@ -951,15 +1032,55 @@ function useAllSpotsData(logEntries) {
 
           const result = {};
           SPOTS.forEach(s => {
-            const px = pixels[s.name];
-            if (px) {
-              result[s.name] = {
-                turbidity: px.turbidity,
-                r: px.r, g: px.g, b: px.b,
-                date: tcDate,
-                agedays,
-              };
+            const tc   = tcPixels[s.name];
+            const b721 = b721Pixels[s.name];
+
+            // Need at least the TrueColor pixel to show a swatch
+            if (!tc && !b721) return;
+
+            let turbidity = null;
+            let turbiditySource = null;
+
+            if (b721) {
+              // Bands 7-2-1 turbidity: in this composite, band 7 (SWIR 2.1µm)
+              // maps to the RED channel. High red = high suspended sediment.
+              // Band 2 (NIR 0.86µm) maps to GREEN. Band 1 (red 0.65µm) maps to BLUE.
+              // We use normalised red fraction as the sediment index — this is
+              // essentially a SWIR-based NDTI analogue, robust to sun glint and
+              // atmospheric haze which mostly affect visible wavelengths.
+              const { r, g, b } = b721;
+              const total = r + g + b;
+              if (total > 10) {
+                const swirFraction  = r / total;   // band 7 SWIR — sediment proxy
+                const nirFraction   = g / total;   // band 2 NIR
+                const redFraction   = b / total;   // band 1 red
+                // Clear water: swirFraction low (~0.20), nirFraction moderate
+                // Turbid/sediment: swirFraction high (0.45–0.70)
+                // Scale 0.20–0.65 range to 0–100
+                const raw = (swirFraction - 0.18) / (0.60 - 0.18) * 100;
+                turbidity = Math.min(100, Math.max(0, Math.round(raw)));
+                turbiditySource = "bands721";
+                console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
+              }
             }
+
+            // Fall back to TrueColor turbidity if Bands721 pixel was rejected
+            if (turbidity === null && tc?.turbidity != null) {
+              turbidity = tc.turbidity;
+              turbiditySource = "truecolor";
+              console.log(`[Satellite TC fallback] ${s.name}: turbidity=${turbidity}`);
+            }
+
+            result[s.name] = {
+              turbidity,
+              turbiditySource,
+              // Display swatch uses TrueColor RGB (natural looking) with B721 as fallback
+              r: tc?.r ?? b721?.r ?? 0,
+              g: tc?.g ?? b721?.g ?? 0,
+              b: tc?.b ?? b721?.b ?? 0,
+              date: tcDate,
+              agedays,
+            };
           });
 
           if (!cancelled) {
@@ -1435,6 +1556,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                   const age = data.satData.agedays;
                   const label = t > 60 ? "Turbid" : t > 30 ? "Moderate" : t > 10 ? "Clear" : "Very Clear";
                   const tColor = t > 60 ? "#e03030" : t > 30 ? "#f07040" : t > 10 ? "#f0c040" : "#00e5a0";
+                  const srcLabel = data.satData.turbiditySource === "bands721" ? "SWIR" : "TC";
                   return (
                     <span>
                       <span style={{color: tColor}}>{label} ({t})</span>
@@ -1445,7 +1567,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                         background:`rgb(${data.satData.r},${data.satData.g},${data.satData.b})`,
                         border:"1px solid #334"
                       }} />
-                      <span style={{color:"#4a7a8a",fontSize:"0.65rem"}}> {age}d ago</span>
+                      <span style={{color:"#4a7a8a",fontSize:"0.65rem"}}> {age}d ago · {srcLabel}</span>
                     </span>
                   );
                 })(),
@@ -1917,11 +2039,11 @@ function DataSourcesPage() {
       name: "Open-Meteo Weather API",
       url: "https://api.open-meteo.com/v1/forecast",
       icon: "💨",
-      provides: "Wind speed & direction (10m), precipitation (hourly + 14-day history)",
+      provides: "Wind speed & direction (10m), precipitation (hourly + 9-day history + 7-day forecast). Real-time current block fetched separately.",
       resolution: "~11 km global, ~1 km mesoscale (hourly updates)",
       models: "GFS, ICON, GEM, ECMWF IFS — auto-selects best for region",
       license: "CC BY 4.0 — Open-Meteo.com",
-      notes: "Each spot uses a weather_lat/lon coordinate (on land) to guarantee wind/rain data. Offshore display coordinates may fall outside the land grid, returning null. The safe() function converts null → 0, which can make genuinely missing data appear as calm conditions.",
+      notes: "Each spot uses a weather_lat/lon coordinate (on land) to guarantee wind/rain data. Offshore display coordinates may fall outside the land grid, returning null. The safe() function converts null → 0, which can make genuinely missing data appear as calm conditions. Wind speed unit is kmh — Open-Meteo's API does not accept kph. A real-time current block is fetched separately (forecast_days=1) and prioritised over hourly data for present conditions. Spot fetches are staggered 300ms apart to avoid rate-limiting.",
       windNote: true,
     },
     {
@@ -1948,11 +2070,11 @@ function DataSourcesPage() {
       name: "NASA GIBS Satellite Imagery",
       url: "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/",
       icon: "🛰️",
-      provides: "True-colour satellite imagery — turbidity visual check at each spot",
-      resolution: "250m (true colour)",
-      models: "MODIS Aqua/Terra True Colour",
+      provides: "Dual-layer MODIS Aqua imagery — TrueColor for display, Bands 7-2-1 (SWIR) for turbidity scoring",
+      resolution: "250m per pixel at zoom level 9",
+      models: "MODIS Aqua CorrectedReflectance — TrueColor & Bands721",
       license: "NASA EOSDIS — public domain",
-      notes: "The app samples the exact pixel colour at each spot location from WMTS tiles to compute a turbidity index from RGB ratios. Searches back up to 10 days for cloud-free scenes. Turbidity data is now integrated into spot scores via satAdj factor (age-weighted, full trust at 0 days, zero trust at 3+ days).",
+      notes: "Two WMTS layers are fetched simultaneously for each date. The TrueColor layer (bands 1-4-3) provides the natural-colour swatch shown in the card. The Bands 7-2-1 layer (SWIR/NIR/Red false colour) is used for turbidity scoring — its red channel (band 7, 2.1µm SWIR) is a direct proxy for suspended sediment and is immune to sun glint and atmospheric haze that can corrupt visible-band readings. A 5×5 pixel neighbourhood is sampled per spot; cloud (high brightness, low saturation) and glint pixels are rejected before scoring. Searches back up to 14 days for a scene with >25% valid ocean pixels. Score label shows · SWIR when scored from Bands 7-2-1, or · TC on TrueColor fallback.",
     },
   ];
 
@@ -1970,9 +2092,10 @@ function DataSourcesPage() {
           <div className="ds-alert-title">About Wind Readings of 0 kph</div>
           <p>
             The Open-Meteo hourly grid can return <code>null</code> for <code>wind_speed_10m</code> at the matched timestamp
-            if the model data hasn&apos;t propagated for that hour. The app now falls back to the API&apos;s <code>current</code> real-time
-            reading when the hourly value is missing — look for the ⚡ indicator on wind readings. If both hourly and current
+            if the model data hasn&apos;t propagated for that hour. The app fetches a separate <code>current</code> real-time block
+            and prioritises it over the hourly value — look for the ⚡ indicator on wind readings. If both hourly and current
             are null, <code>safe()</code> converts to <strong>0</strong> and you&apos;ll see a ⚠️ warning.
+            Wind speed is requested in <code>kmh</code> (not <code>kph</code> — the API requires the former).
           </p>
           <p style={{marginTop:"0.5rem"}}>
             <strong>Primary cross-check:</strong>{" "}
@@ -1992,7 +2115,7 @@ function DataSourcesPage() {
 
       <div className="ds-section">
         <h3 className="ds-section-title">🔗 Data Sources</h3>
-        <p className="ds-section-desc">The model pulls from 4 independent data sources, cross-referencing satellite imagery with forecast models and ocean current observations.</p>
+        <p className="ds-section-desc">The model pulls from 4 independent data sources, cross-referencing satellite imagery (MODIS Aqua SWIR + TrueColor) with forecast models and ocean current observations.</p>
         <div className="ds-sources">
           {dataSources.map((src, i) => (
             <div key={i} className="ds-source-card">
@@ -2162,9 +2285,13 @@ function DataSourcesPage() {
             <div>
               <div className="ds-val-title">Satellite Turbidity Integration</div>
               <div className="ds-val-text">
-                MODIS Aqua true-colour pixel sampling now feeds directly into scoring. The turbidity index (0–100) from RGB ratios
-                is applied as a satAdj factor: high turbidity (&gt;60) suppresses scores, low turbidity (&lt;20) provides a small clarity bonus.
-                Confidence is age-weighted — full trust at 0 days old, zero trust at 3+ days.
+                Two MODIS Aqua layers are fetched per scene. The <strong>Bands 7-2-1 (SWIR)</strong> layer drives turbidity scoring:
+                its red channel (shortwave infrared, 2.1µm) is a sediment-specific proxy unaffected by sun glint or afternoon atmospheric haze
+                that can corrupt visible-band readings. Cloud and glint pixels are masked using brightness and saturation thresholds before
+                a normalised SWIR fraction is computed. The <strong>TrueColor</strong> layer provides the natural-colour swatch shown in the card only.
+                The resulting turbidity index (0–100) feeds the satAdj scoring factor: high turbidity (&gt;60) suppresses scores, low (&lt;20)
+                provides a small clarity bonus. Confidence is age-weighted — full trust at 0 days, zero at 3+ days.
+                The card label shows <em>· SWIR</em> or <em>· TC</em> (fallback) to indicate which source was used.
               </div>
             </div>
           </div>
