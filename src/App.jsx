@@ -1337,6 +1337,8 @@ function WindForecastBar({ days }) {
 function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunitySave, isConfigured }) {
   const [vis, setVis] = useState("");
   const [tide, setTide] = useState("high");
+  const [currentStrength, setCurrentStrength] = useState("none");
+  const [currentDirection, setCurrentDirection] = useState(null);
   const [notes, setNotes] = useState("");
   const [date, setDate] = useState(new Date().toLocaleDateString("en-CA"));
   const [name, setName] = useState(diverName || "");
@@ -1352,6 +1354,8 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
     const localEntry = {
       id: Date.now(), date, spot: spot.name,
       observedVis: v, tide, modelScore,
+      current_strength: currentStrength,
+      current_direction: currentStrength !== "none" ? currentDirection : null,
       notes: notes.trim(), diver_name: name.trim(),
     };
     const existing = loadLog();
@@ -1364,6 +1368,8 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
         await onCommunitySave({
           diver_name: name.trim(), date, spot: spot.name,
           observed_vis: v, tide, model_score: modelScore,
+          current_strength: currentStrength,
+          current_direction: currentStrength !== "none" ? currentDirection : null,
           notes: notes.trim(),
         });
       } catch(e) {
@@ -1404,6 +1410,28 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
             ))}
           </div>
         </div>
+        <div className="modal-field">
+          <label>Current Strength</label>
+          <div className="tide-buttons">
+            {[["none","None"],["light","Light"],["moderate","Moderate"],["strong","Strong"]].map(([val,label]) => (
+              <button key={val} className={`tide-btn ${currentStrength === val ? "active" : ""}`}
+                onClick={() => { setCurrentStrength(val); if (val === "none") setCurrentDirection(null); }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {currentStrength !== "none" && (
+          <div className="modal-field">
+            <label>Current Direction <span style={{fontWeight:400,color:"#3a6070",fontSize:"0.78rem"}}>(water flowing toward)</span></label>
+            <div className="compass-picker">
+              {["N","NE","E","SE","S","SW","W","NW"].map(dir => (
+                <button key={dir} className={`compass-btn compass-${dir} ${currentDirection === dir ? "active" : ""}`}
+                  onClick={() => setCurrentDirection(dir)}>{dir}</button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="modal-field">
           <label>Notes (optional)</label>
           <textarea placeholder="Water colour, fish activity, conditions..." value={notes}
@@ -2521,6 +2549,12 @@ function CommunityLogPanel({ logs, logStatus, spotName }) {
           <span className="cp-date">{e.date}</span>
           <span className="cp-vis" style={{color: scoreToColor(Math.round((e.observed_vis ?? e.observedVis ?? 0) * 10))}}>{e.observed_vis ?? e.observedVis}m</span>
           <span className="cp-tide">{e.tide} tide</span>
+          {e.current_strength && e.current_strength !== "none" && (
+            <span className="cp-current" title="Observed current">
+              {e.current_strength === "light" ? "〰️" : e.current_strength === "moderate" ? "🌊" : "💨"}
+              {" "}{e.current_strength}{e.current_direction ? ` ${e.current_direction}` : ""}
+            </span>
+          )}
           <span className="cp-model">model: {e.model_score ?? e.modelScore}</span>
           {e.notes && <span className="cp-note" title={e.notes}>📝</span>}
         </div>
@@ -2859,6 +2893,23 @@ export default function App() {
         .tide-buttons { display: flex; gap: 0.5rem; }
         .tide-btn { flex: 1; padding: 0.5rem; background: #040d14; border: 1px solid #1a3a4a; border-radius: 7px; color: #4a7a8a; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.85rem; }
         .tide-btn.active { background: rgba(0,180,140,0.12); border-color: #2a8a7a; color: #00e5a0; font-weight: 700; }
+        .compass-picker {
+          display: grid;
+          grid-template-areas: ". N . " "NW . NE" "W . E" "SW . SE" ". S .";
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 0.3rem;
+          width: 160px;
+        }
+        .compass-btn { padding: 0.4rem 0; background: #040d14; border: 1px solid #1a3a4a; border-radius: 6px; color: #4a7a8a; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.78rem; font-weight: 600; text-align: center; }
+        .compass-btn.active { background: rgba(0,150,255,0.12); border-color: #2a6aaa; color: #60b8f0; }
+        .compass-N  { grid-area: N;  }
+        .compass-NE { grid-area: NE; }
+        .compass-E  { grid-area: E;  }
+        .compass-SE { grid-area: SE; }
+        .compass-S  { grid-area: S;  }
+        .compass-SW { grid-area: SW; }
+        .compass-W  { grid-area: W;  }
+        .compass-NW { grid-area: NW; }
         .modal-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; }
         .modal-score { font-size: 0.7rem; color: #3a6070; font-family: 'Space Mono', monospace; }
         .modal-save { padding: 0.6rem 1.4rem; background: #1a4a3a; border: 1px solid #2a8a6a; border-radius: 8px; color: #00e5a0; font-weight: 700; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.9rem; }
@@ -2916,6 +2967,7 @@ export default function App() {
         .cp-date { color: #3a5a7a; font-family: 'Space Mono', monospace; font-size: 0.62rem; }
         .cp-vis { font-weight: 700; font-family: 'Space Mono', monospace; }
         .cp-tide { color: #3a6a7a; font-size: 0.65rem; }
+        .cp-current { color: #4a8aaa; font-size: 0.65rem; white-space: nowrap; }
         .cp-model { color: #2a4a6a; font-size: 0.62rem; font-family: 'Space Mono', monospace; }
         .cp-note { cursor: pointer; }
         .cp-more { display: block; width: 100%; text-align: center; padding: 0.4rem; margin-top: 0.4rem; background: none; border: 1px solid rgba(0,100,160,0.15); border-radius: 5px; color: #3a6a8a; font-size: 0.65rem; cursor: pointer; font-family: 'Syne',sans-serif; }
