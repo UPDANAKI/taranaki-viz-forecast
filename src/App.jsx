@@ -278,25 +278,27 @@ function scoreSpot(cond, spot) {
   const river   = -riverImpactEffective * (100 - r) * W.river_mult;
 
   // ── CHANGE 1: Satellite turbidity adjustment ──────────────────────────────
-  // cond.satTurbidity: 0–100 index from MODIS TrueColor pixel sampling
-  // High satellite turbidity directly suppresses the rain score component,
-  // providing ground-truth correction when satellite data is fresh (< 2 days old).
+  // cond.satTurbidity: 0–100 index from MODIS pixel sampling
+  // Fresh high-turbidity readings are treated as ground truth and can
+  // strongly suppress the score regardless of what the weather model says.
+  // Penalty tiers:
+  //   turbidity >70: severe plume — penalty up to 90 pts (overrides almost everything)
+  //   turbidity 40–70: moderate turbidity — penalty 30–70 pts
+  //   turbidity 20–40: mild murk — penalty 5–30 pts
+  //   turbidity <20: clarity bonus up to 8 pts
   let satAdj = 0;
   if (cond.satTurbidity != null && cond.satTurbidityAge != null) {
-    // Weight satellite confidence by age: full weight at 0 days, zero at 3+ days
-    const satConfidence = Math.max(0, 1 - cond.satTurbidityAge / 3);
+    // Age weighting: full at 0 days, halved at 2 days, zero at 4+ days
+    const satConfidence = Math.max(0, 1 - cond.satTurbidityAge / 4);
     if (satConfidence > 0) {
-      // Map turbidity index (0–100) to a rain-equivalent penalty (0–95)
-      // High turbidity (>60) overrides rain model with strong penalty
-      // Low turbidity (<20) provides a small clarity bonus
-      const satPenalty = cond.satTurbidity > 60
-        ? Math.min(95, cond.satTurbidity * 1.2) * satConfidence
-        : cond.satTurbidity > 20
-        ? cond.satTurbidity * 0.6 * satConfidence
-        : 0;
-      const satBonus = cond.satTurbidity < 20
-        ? (20 - cond.satTurbidity) * 0.3 * satConfidence
-        : 0;
+      const t = cond.satTurbidity;
+      let satPenalty = 0;
+      if (t > 70)      satPenalty = 50 + (t - 70) * 1.3;  // 50–89 pts
+      else if (t > 40) satPenalty = 20 + (t - 40) * 1.0;  // 20–50 pts
+      else if (t > 20) satPenalty = (t - 20) * 1.0;        // 0–20 pts
+      satPenalty = Math.min(90, satPenalty) * satConfidence;
+
+      const satBonus = t < 20 ? (20 - t) * 0.4 * satConfidence : 0;
       satAdj = satBonus - satPenalty;
     }
   }
@@ -366,40 +368,56 @@ function latLonToTilePx(lat, lon, z) {
 // ── Pixel quality classification ─────────────────────────────────────────────
 // Works for BOTH TrueColor (R=red vis, G=green vis, B=blue vis) and
 // Bands721 (R=SWIR band7 2.1µm, G=NIR band2 0.86µm, B=red band1 0.65µm).
-// Cloud/glint detection is band-agnostic (brightness + saturation).
+// KEY PRINCIPLE: turbid coastal water (brown/green) must NOT be classified as
+// land — it is the signal we are trying to detect. Land rules must be tight.
 function classifyPixel(r, g, b, a) {
   if (a < 10) return "transparent";
   const brightness = (r + g + b) / 3;
   const maxCh = Math.max(r, g, b);
   const minCh = Math.min(r, g, b);
   const saturation = maxCh > 0 ? (maxCh - minCh) / maxCh : 0;
-  // Cloud: very bright AND low saturation (white/grey in both composites)
-  if (brightness > 195 && saturation < 0.12) return "cloud";
-  // Sun glint: extremely bright regardless of colour
-  if (brightness > 215) return "glint";
-  // Land in TrueColor: green/brown with low blue
-  // Land in Bands721: vegetation = very high NIR (green channel), low blue
-  if (g > 160 && b < 80) return "land";               // vegetation (NIR-bright in B721)
-  if (r > b * 1.5 && g > b * 1.2 && b < 90) return "land"; // bare/brown land in TC
+  // Cloud: very bright AND very low saturation (white/grey in both composites)
+  if (brightness > 200 && saturation < 0.10) return "cloud";
+  // Sun glint: very bright regardless of colour
+  if (brightness > 220) return "glint";
+  // Land in Bands721: vegetation has extremely high NIR (green channel g>180)
+  // AND low blue. Turbid water never reaches g>180 in B721.
+  if (g > 180 && b < 70) return "land";
+  // Land in TrueColor: only very saturated green vegetation (not brown water).
+  // Requires green to DOMINATE (g > r AND g > b), be bright, and blue very low.
+  // Brown turbid water has r approx g and both > b -- this rule will not catch it.
+  if (g > r * 1.15 && g > b * 2.0 && g > 120 && b < 60) return "land";
+  // Extremely dark pixels with no signal -- likely deep shadow or data gap
+  if (brightness < 5) return "transparent";
   return "water";
 }
 
-// Normalised ocean turbidity index from TrueColor pixel — illumination-independent
-// Returns 0 (clear deep blue) → 100 (very turbid brown/green)
+// Normalised ocean turbidity index from TrueColor pixel -- illumination-independent
+// Returns 0 (clear deep blue) to 100 (very turbid brown/green)
+// Calibrated for Taranaki coastal water as seen in MODIS JPEG tiles:
+//   Clear offshore:  rgb approx (40,60,90)  -- blue dominant, bn~0.47
+//   Mild turbidity:  rgb approx (55,75,80)  -- blue still leads, bn~0.38
+//   Moderate turbid: rgb approx (80,90,70)  -- green/blue equal, bn~0.28
+//   Heavy plume:     rgb approx (110,100,60) -- red+green dominate, bn~0.22
 function calcTurbidity(r, g, b) {
   const total = r + g + b;
-  if (total < 10) return null;
-  // Normalised band fractions — divide out overall brightness/illumination
+  if (total < 15) return null;
   const rn = r / total;
   const gn = g / total;
   const bn = b / total;
-  // Clear offshore ocean: bn ≈ 0.40–0.50 (blue dominates)
-  // Turbid river plume: rn + gn high (0.55–0.70), bn low (0.25–0.35)
-  // Sediment index: weighted red+green vs blue ratio
-  const sedimentIdx = (rn * 0.65 + gn * 0.35) / Math.max(0.01, bn);
-  // Blue bonus: extra clear-water credit when blue fraction is high
-  const bluenessBonus = Math.max(0, bn - 0.38) * 80;
-  const raw = sedimentIdx * 55 - bluenessBonus;
+
+  // Primary index: how much blue is suppressed relative to red+green
+  // Clear ocean: bn ~0.47, turbid plume: bn ~0.22
+  const blueSupression = Math.max(0, 0.48 - bn) / 0.26; // 0 at bn=0.48, 1 at bn=0.22
+
+  // Secondary: red+green excess over blue (sediment signal)
+  const warmExcess = Math.max(0, (rn + gn) - 0.55) / 0.25; // 0 at 0.55, 1 at 0.80
+
+  // Green channel spike: phytoplankton blooms push gn high with moderate rn
+  const greenSpike = Math.max(0, gn - 0.34) / 0.12;
+
+  // Combined: blue suppression is the strongest signal, warm excess confirms it
+  const raw = (blueSupression * 0.55 + warmExcess * 0.30 + greenSpike * 0.15) * 100;
   return Math.min(100, Math.max(0, Math.round(raw)));
 }
 
@@ -454,7 +472,12 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
         try {
           const allPixels = sampleNeighbourhood(spot.pixelX, spot.pixelY, 2);
 
-          // Keep only valid water pixels — reject cloud, glint, land, transparent
+          // Log every pixel's classification so we can debug misclassifications
+          const classified = allPixels.map(([r, g, b, a]) => ({ r, g, b, a, type: classifyPixel(r, g, b, a) }));
+          const typeCounts = classified.reduce((acc, p) => { acc[p.type] = (acc[p.type]||0) + 1; return acc; }, {});
+          console.log(`[Satellite] ${spot.name} px(${spot.pixelX},${spot.pixelY}) classifications:`, typeCounts);
+
+          // Keep only valid water pixels -- reject cloud, glint, land, transparent
           const waterPixels = allPixels.filter(([r, g, b, a]) =>
             classifyPixel(r, g, b, a) === "water"
           );
@@ -972,9 +995,10 @@ function useAllSpotsData(logEntries) {
       const satPromise = (async () => {
         try {
           // Walk back up to 14 days to find a cloud-free MODIS Aqua tile.
-          // Uses classifyPixel() to count valid water pixels — if >30% of sampled
-          // pixels are water (not cloud/glint/land) we consider the tile usable.
-          // Each probe has a 5s timeout so a hanging image can't stall the chain.
+          // Probe uses zoom 7, tile centred on Taranaki (x=124, y=77) -- a
+          // ~150km tile covering just the Taranaki coast, much tighter than
+          // the old zoom-5 tile which covered half of NZ and would pass the
+          // 25% water threshold even when Taranaki itself was fully cloud-covered.
           let tcDate = null;
           for (let n = 1; n <= 14; n++) {
             const d = new Date();
@@ -984,8 +1008,8 @@ function useAllSpotsData(logEntries) {
               new Promise(resolve => {
                 const img = new Image();
                 img.crossOrigin = "anonymous";
-                // Probe tile centred on Taranaki coast (zoom 5, tile x=31 y=19 in WMTS coords)
-                img.src = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/5/19/31.jpg`;
+                // Zoom 7 tile x=124, y=77 centres on Taranaki coast (-39S, 174E)
+                img.src = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level7/7/77/124.jpg`;
                 img.onload = () => {
                   try {
                     const c = document.createElement("canvas");
@@ -1002,12 +1026,12 @@ function useAllSpotsData(logEntries) {
                     }
                     const waterFraction = total > 0 ? waterCount / total : 0;
                     console.log(`[Satellite probe] ${dateStr}: ${waterCount}/${total} water pixels (${(waterFraction*100).toFixed(0)}%)`);
-                    resolve(waterFraction > 0.25); // need at least 25% valid ocean pixels
+                    resolve(waterFraction > 0.30); // 30% threshold on tighter tile
                   } catch { resolve(true); }
                 };
                 img.onerror = () => resolve(false);
               }),
-              new Promise(resolve => setTimeout(() => resolve(false), 5000)), // 5s timeout per probe
+              new Promise(resolve => setTimeout(() => resolve(false), 5000)),
             ]);
             if (hasData) { tcDate = dateStr; break; }
           }
@@ -1041,34 +1065,53 @@ function useAllSpotsData(logEntries) {
             let turbidity = null;
             let turbiditySource = null;
 
-            if (b721) {
-              // Bands 7-2-1 turbidity: in this composite, band 7 (SWIR 2.1µm)
-              // maps to the RED channel. High red = high suspended sediment.
-              // Band 2 (NIR 0.86µm) maps to GREEN. Band 1 (red 0.65µm) maps to BLUE.
-              // We use normalised red fraction as the sediment index — this is
-              // essentially a SWIR-based NDTI analogue, robust to sun glint and
-              // atmospheric haze which mostly affect visible wavelengths.
-              const { r, g, b } = b721;
-              const total = r + g + b;
-              if (total > 10) {
-                const swirFraction  = r / total;   // band 7 SWIR — sediment proxy
-                const nirFraction   = g / total;   // band 2 NIR
-                const redFraction   = b / total;   // band 1 red
-                // Clear water: swirFraction low (~0.20), nirFraction moderate
-                // Turbid/sediment: swirFraction high (0.45–0.70)
-                // Scale 0.20–0.65 range to 0–100
-                const raw = (swirFraction - 0.18) / (0.60 - 0.18) * 100;
-                turbidity = Math.min(100, Math.max(0, Math.round(raw)));
-                turbiditySource = "bands721";
-                console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
-              }
-            }
+            // TrueColor is the PRIMARY turbidity source. The calcTurbidity() function
+            // reads blue suppression and warm-colour excess directly from visible bands --
+            // calibrated against known Taranaki water colours. It is reliable.
+            //
+            // Bands721 is used as a SECONDARY confirming signal only. From the live logs
+            // the B721 composite returned by GIBS has green (NIR) strongly dominating red
+            // even in turbid water (g=110 vs r=58 at Nga Motu, which TC correctly scored
+            // as 57). This means either the JPEG band order differs from the documented
+            // R=band7/G=band2/B=band1 spec after GIBS processing, or JPEG compression
+            // at zoom 9 heavily shifts the channel balance. Either way, we cannot trust
+            // the absolute SWIR fraction from B721.
+            //
+            // Instead we use B721 only when it shows SWIR > NIR (r > g), which is a
+            // strong unambiguous sediment signal regardless of calibration uncertainty.
+            // In that case it can push the final turbidity UPWARD from the TC baseline,
+            // but never downward (it cannot clear a TC-detected plume).
 
-            // Fall back to TrueColor turbidity if Bands721 pixel was rejected
-            if (turbidity === null && tc?.turbidity != null) {
+            // Step 1: TrueColor baseline
+            if (tc?.turbidity != null) {
               turbidity = tc.turbidity;
               turbiditySource = "truecolor";
-              console.log(`[Satellite TC fallback] ${s.name}: turbidity=${turbidity}`);
+              console.log(`[Satellite TC] ${s.name}: rgb(${tc.r},${tc.g},${tc.b}) turbidity=${turbidity}`);
+            }
+
+            // Step 2: B721 confirmation -- only when SWIR clearly exceeds NIR (r > g)
+            if (b721) {
+              const { r, g, b } = b721;
+              const total = r + g + b;
+              if (total > 20 && r > g) {
+                // SWIR dominates -- strong unambiguous sediment signal
+                // Scale the excess: how far above parity is SWIR?
+                const swirExcess = (r - g) / total; // 0 at parity, ~0.15 for heavy plume
+                const b721Turbidity = Math.min(100, Math.max(0, Math.round(swirExcess / 0.15 * 100)));
+                console.log(`[Satellite B721 confirm] ${s.name}: rgb(${r},${g},${b}) swirExcess=${swirExcess.toFixed(3)} b721turbidity=${b721Turbidity}`);
+                // Only allow B721 to push turbidity UP from TC baseline, not down
+                if (turbidity === null) {
+                  turbidity = b721Turbidity;
+                  turbiditySource = "bands721";
+                } else if (b721Turbidity > turbidity) {
+                  // B721 sees more turbidity than TC -- take a weighted blend
+                  turbidity = Math.round(turbidity * 0.4 + b721Turbidity * 0.6);
+                  turbiditySource = "bands721+tc";
+                  console.log(`[Satellite B721 elevated] ${s.name}: final turbidity=${turbidity}`);
+                }
+              } else {
+                console.log(`[Satellite B721 skip] ${s.name}: rgb(${r},${g},${b}) NIR>=SWIR, not reliable -- TC reading kept`);
+              }
             }
 
             result[s.name] = {
@@ -2893,23 +2936,12 @@ export default function App() {
         .tide-buttons { display: flex; gap: 0.5rem; }
         .tide-btn { flex: 1; padding: 0.5rem; background: #040d14; border: 1px solid #1a3a4a; border-radius: 7px; color: #4a7a8a; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.85rem; }
         .tide-btn.active { background: rgba(0,180,140,0.12); border-color: #2a8a7a; color: #00e5a0; font-weight: 700; }
-        .compass-picker {
-          display: grid;
-          grid-template-areas: ". N . " "NW . NE" "W . E" "SW . SE" ". S .";
-          grid-template-columns: 1fr 1fr 1fr;
-          gap: 0.3rem;
-          width: 160px;
-        }
+        .compass-picker { display: grid; grid-template-areas: ". N ." "NW . NE" "W . E" "SW . SE" ". S ."; grid-template-columns: 1fr 1fr 1fr; gap: 0.3rem; width: 160px; }
         .compass-btn { padding: 0.4rem 0; background: #040d14; border: 1px solid #1a3a4a; border-radius: 6px; color: #4a7a8a; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.78rem; font-weight: 600; text-align: center; }
         .compass-btn.active { background: rgba(0,150,255,0.12); border-color: #2a6aaa; color: #60b8f0; }
-        .compass-N  { grid-area: N;  }
-        .compass-NE { grid-area: NE; }
-        .compass-E  { grid-area: E;  }
-        .compass-SE { grid-area: SE; }
-        .compass-S  { grid-area: S;  }
-        .compass-SW { grid-area: SW; }
-        .compass-W  { grid-area: W;  }
-        .compass-NW { grid-area: NW; }
+        .compass-N  { grid-area: N;  } .compass-NE { grid-area: NE; } .compass-E  { grid-area: E;  }
+        .compass-SE { grid-area: SE; } .compass-S  { grid-area: S;  } .compass-SW { grid-area: SW; }
+        .compass-W  { grid-area: W;  } .compass-NW { grid-area: NW; }
         .modal-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; }
         .modal-score { font-size: 0.7rem; color: #3a6070; font-family: 'Space Mono', monospace; }
         .modal-save { padding: 0.6rem 1.4rem; background: #1a4a3a; border: 1px solid #2a8a6a; border-radius: 8px; color: #00e5a0; font-weight: 700; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.9rem; }
