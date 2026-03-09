@@ -1218,7 +1218,7 @@ function getDailyScores(marine, weather, spot, W) {
 
 // ── Advice generator ──────────────────────────────────────────────────────────
 
-function getAdvice(cond, results) {
+function getAdvice(cond, results, region = "taranaki") {
   const best = results[0];
   const tips = [];
 
@@ -1247,10 +1247,16 @@ function getAdvice(cond, results) {
   if (cond.swell_hist_72h > 2.0)
     tips.push({ e: "🌊", t: `Swell peaked ${cond.swell_hist_72h.toFixed(1)}m in the past 72h — water may still be dirty.` });
 
-  if (cond.rain_48h > 20 && cond.days_since_rain < 2)
-    tips.push({ e: "🌧️", t: "Recent heavy rain — avoid Waitara and Patea river mouths." });
+  if (cond.rain_48h > 20 && cond.days_since_rain < 2) {
+    if (region === "taranaki")
+      tips.push({ e: "🌧️", t: "Recent heavy rain — avoid Waitara and Patea river mouths." });
+    else if (region === "kapiti")
+      tips.push({ e: "🌧️", t: "Recent heavy rain — expect reduced viz near river outlets and the Waikanae estuary." });
+    else
+      tips.push({ e: "🌧️", t: "Recent heavy rain — expect reduced viz near river mouths and inshore spots." });
+  }
 
-  if (cond.rainHistory) {
+  if (region === "taranaki" && cond.rainHistory) {
     const plumePct = Math.round(plumeReachFactor(cond.rainHistory) * 100);
     if (plumePct >= 80)
       tips.push({ e: "🟤", t: `Heavy turbidity plume reaching Motumahanga (${plumePct}% impact) — offshore buffer fully overwhelmed. All Nga Motu spots affected. Check satellite imagery before heading out.` });
@@ -2466,7 +2472,7 @@ function BestDayPanel({ spotDataMap }) {
 
 // ── Advice panel ──────────────────────────────────────────────────────────────
 
-function AdvicePanel({ spotDataMap, spots }) {
+function AdvicePanel({ spotDataMap, spots, region }) {
   const advice = useMemo(() => {
     const entries = Object.entries(spotDataMap);
     if (entries.length === 0) return [];
@@ -2479,8 +2485,8 @@ function AdvicePanel({ spotDataMap, spots }) {
       return { spot, score: d?.score ?? 0 };
     }).sort((a, b) => b.score - a.score);
 
-    return getAdvice(firstData.cond, scored);
-  }, [spotDataMap]);
+    return getAdvice(firstData.cond, scored, region);
+  }, [spotDataMap, region]);
 
   if (!advice || advice.length === 0) return null;
   return (
@@ -4011,7 +4017,7 @@ export default function App() {
               )}
             </div>
 
-            <AdvicePanel spotDataMap={spotDataMap} spots={SPOTS} />
+            <AdvicePanel spotDataMap={spotDataMap} spots={SPOTS} region={region} />
             <BestDayPanel spotDataMap={spotDataMap} />
             <CommunityStats logs={allLogs} logStatus={logStatus} />
 
