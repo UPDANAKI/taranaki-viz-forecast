@@ -22,7 +22,7 @@ exports.handler = async (event) => {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",
-    "Cache-Control": "public, max-age=300", // cache 5 min — matches TRC update freq
+        "Cache-Control": "public, max-age=3600", // cache 1 hour - reduces function invocations
   };
 
   if (event.httpMethod === "OPTIONS") {
