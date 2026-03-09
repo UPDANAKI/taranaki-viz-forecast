@@ -3398,11 +3398,17 @@ function ShareButtons({ spotDataMap, compact, regionLabel }) {
 }
 
 // ── Welcome banner ─────────────────────────────────────────────────────────────
-function WelcomeBanner({ onDismiss, onSetName, diverName, regionLabel }) {
+function WelcomeBanner({ onDismiss, onSetName, onSetEmail, diverName, regionLabel }) {
   const [name, setName] = useState(diverName || "");
+  const [email, setEmail] = useState("");
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
-  const handleJoin = () => { if (name.trim()) onSetName(name.trim()); setDismissed(true); onDismiss(); };
+  const handleJoin = () => {
+    if (name.trim()) onSetName(name.trim());
+    if (email.trim()) onSetEmail(email.trim());
+    setDismissed(true);
+    onDismiss();
+  };
   return (
     <div className="welcome-banner">
       <div className="welcome-glow" />
@@ -3422,9 +3428,12 @@ function WelcomeBanner({ onDismiss, onSetName, diverName, regionLabel }) {
         <div className="welcome-join">
           <input type="text" className="welcome-name-input" placeholder="Your name (for dive logs)"
             value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleJoin()} />
+          <input type="email" className="welcome-name-input" placeholder="Email — get notified when new spots are added (optional)"
+            value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleJoin()}
+            style={{ marginTop: "0.5rem" }} />
           <button className="welcome-go-btn" onClick={handleJoin}>{name.trim() ? "Let's Go 🐟" : "Skip for Now"}</button>
         </div>
-        <div className="welcome-hint">You can always add your name later when logging a dive</div>
+        <div className="welcome-hint">Email is optional and never shared — only used for app updates</div>
       </div>
     </div>
   );
@@ -3597,6 +3606,26 @@ export default function App() {
     setDiverName(name);
     try { sessionStorage.setItem("taranaki_diver_name", name); } catch {}
   }, []);
+
+  const handleSetEmail = useCallback(async (email) => {
+    // Upsert into users table — creates record if new, updates if email already exists
+    // is_pro defaults to false in the DB schema
+    try {
+      await supaFetch("/users", {
+        method: "POST",
+        headers: { "Prefer": "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          email: email.toLowerCase().trim(),
+          name: diverName || null,
+          region: region,
+          joined_at: new Date().toISOString(),
+        }),
+      });
+    } catch (e) {
+      // Silent fail — email capture is best-effort
+      console.warn("[Users] Failed to save email:", e.message);
+    }
+  }, [diverName, region]);
 
   return (
     <>
@@ -3969,6 +3998,7 @@ export default function App() {
                 regionLabel={REGION.label}
                 onDismiss={handleWelcomeDismiss}
                 onSetName={handleSetName}
+                onSetEmail={handleSetEmail}
                 diverName={diverName}
               />
             )}
