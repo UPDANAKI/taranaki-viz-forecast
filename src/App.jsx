@@ -3986,7 +3986,6 @@ export default function App() {
           </div>
           <button className={`page-nav-btn ${activePage === "seasonal" ? "active" : ""}`}
             onClick={() => setActivePage(activePage === "seasonal" ? "forecast" : "seasonal")}>📅 Seasonal</button>
-          <button className={`page-nav-btn ${activePage === "data" ? "active" : ""}`}
         </div>
 
         {activePage === "seasonal" ? (
