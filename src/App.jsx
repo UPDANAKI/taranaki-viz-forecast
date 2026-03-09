@@ -167,38 +167,39 @@ const REGIONS = {
 
     // Seasonal data by spot name (pipeline-calibrated)
     spotSeasonal: {
+      // Real pipeline deltas: clear_pct[month] - annual_avg, from 668+ MODIS obs each
       "Motumahanga (Saddleback Is.)":
-        {1:6,2:9,3:4,4:1,5:2,6:-22,7:-5,8:-1,9:-1,10:-9,11:2,12:-18},
+        {1:+11,2:+7,3:+16,4:+4,5:+5,6:-21,7:-4,8:-2,9:-9,10:-3,11:-2,12:-4},
       "Nga Motu — Inshore (Port Taranaki)":
-        {1:-8,2:-6,3:-4,4:5,5:-1,6:7,7:7,8:13,9:18,10:19,11:-11,12:-5},
+        {1:-14,2:-10,3:-14,4:0,5:+4,6:+4,7:+2,8:+6,9:+8,10:+16,11:-4,12:+2},
       "Fin Fuckers (Cape Egmont / Warea)":
-        {1:2,2:4,3:3,4:-3,5:-3,6:-12,7:-4,8:3,9:8,10:1,11:0,12:5},
+        {1:+1,2:+1,3:-1,4:+1,5:-1,6:-4,7:-4,8:-2,9:+1,10:+1,11:+1,12:+1},
       "Opunake":
-        {1:0,2:-2,3:-1,4:-7,5:-4,6:-11,7:-2,8:2,9:11,10:0,11:-1,12:8},
+        {1:+2,2:-2,3:-3,4:+1,5:-2,6:-1,7:+2,8:-1,9:+6,10:+2,11:-4,12:+5},
       "Patea — Inshore":
-        {1:4,2:16,3:16,4:-2,5:-5,6:-24,7:-13,8:-10,9:10,10:-2,11:5,12:-12},
+        {1:-16,2:-14,3:-21,4:-4,5:+2,6:+21,7:+5,8:+4,9:+15,10:+3,11:-2,12:+6},
       "Patea — Offshore Trap":
-        {1:4,2:16,3:16,4:-2,5:-5,6:-24,7:-13,8:-10,9:10,10:-2,11:5,12:-12},
+        {1:+2,2:+2,3:+2,4:+2,5:-3,6:-6,7:0,8:-1,9:0,10:+2,11:+2,12:+2},
       "The Metal Reef":
-        {1:6,2:-1,3:8,4:-3,5:3,6:-11,7:-2,8:7,9:0,10:3,11:-6,12:3},
+        {1:+9,2:+7,3:+5,4:-6,5:-1,6:-3,7:-10,8:+2,9:-1,10:-5,11:-3,12:+6},
     },
 
     // Seasonal chart data for UI (pipeline clear% by month)
     seasonalChart: [
-      { month:"Jan", clear:67, blueIdx:10 },
-      { month:"Feb", clear:70, blueIdx:11 },
-      { month:"Mar", clear:65, blueIdx:8  },
-      { month:"Apr", clear:52, blueIdx:5  },
-      { month:"May", clear:53, blueIdx:6  },
-      { month:"Jun", clear:27, blueIdx:3  },
-      { month:"Jul", clear:44, blueIdx:3  },
-      { month:"Aug", clear:58, blueIdx:4  },
-      { month:"Sep", clear:59, blueIdx:4  },
-      { month:"Oct", clear:50, blueIdx:5  },
-      { month:"Nov", clear:53, blueIdx:10 },
-      { month:"Dec", clear:43, blueIdx:5  },
+      { month:"Jan", clear:55, blueIdx:9 },
+      { month:"Feb", clear:51, blueIdx:6 },
+      { month:"Mar", clear:60, blueIdx:6 },
+      { month:"Apr", clear:48, blueIdx:4 },
+      { month:"May", clear:49, blueIdx:3 },
+      { month:"Jun", clear:23, blueIdx:1 },
+      { month:"Jul", clear:40, blueIdx:1 },
+      { month:"Aug", clear:42, blueIdx:1 },
+      { month:"Sep", clear:35, blueIdx:1 },
+      { month:"Oct", clear:41, blueIdx:2 },
+      { month:"Nov", clear:42, blueIdx:5 },
+      { month:"Dec", clear:40, blueIdx:4 },
     ],
-    seasonalNote: "674 cloud-free MODIS observations · Motumahanga reference spot",
+    seasonalNote: "668 cloud-free MODIS observations · Motumahanga reference spot",
 
     spots: [
       {
@@ -208,8 +209,8 @@ const REGIONS = {
         weather_lat: -39.055, weather_lon: 174.04,
         shelter: 0.6,  river_impact: 0.2,  papa_risk: 0.2,  swell_exposure: 0.15,
         // Pipeline: best=S,SE,SW — worst=N,NW,E. NW push myth busted.
-        best_wind_dirs: [180, 135, 225],  // S, SE, SW
-        worst_wind_dirs: [0, 315, 90],     // N, NW, E
+        best_wind_dirs: [135, 90, 180],  // SE, E, S
+        worst_wind_dirs: [315, 270, 225],  // NW, W, SW
         wind_push: 0.7,
         nw_rain_penalty: 0.5, southerly_bight: 0.0, tide_sensitive: 0.3,
         plume_reach: 0.7,
@@ -224,8 +225,8 @@ const REGIONS = {
         weather_lat: -39.07, weather_lon: 174.08,
         shelter: 0.85, river_impact: 0.9,  papa_risk: 0.9,  swell_exposure: 0.85,
         // Pipeline: best=N,NE,NW — worst=S,SE,SW. Inverted seasonal — winter best.
-        best_wind_dirs: [0, 45, 315],     // N, NE, NW
-        worst_wind_dirs: [180, 135, 225], // S, SE, SW
+        best_wind_dirs: [0, 315, 45],    // N, NW, NE
+        worst_wind_dirs: [135, 180, 225], // SE, S, SW
         wind_push: 0.3,
         nw_rain_penalty: 0.9, southerly_bight: 0.0, tide_sensitive: 1.0,
         trc_sites: [166, 17], // Urenui + Mangati — Waiwhakaiho is ungauged but correlates
@@ -242,8 +243,8 @@ const REGIONS = {
         // West-facing exposure. Benefits from N/NE wind (offshore). Open to SW swell.
         // No significant rivers nearby — rain effect mainly via direct runoff/papa.
         shelter: 0.25, river_impact: 0.10, papa_risk: 0.35, swell_exposure: 0.55,
-        best_wind_dirs: [0, 45, 90],       // N, NE, E — all offshore on west face
-        worst_wind_dirs: [270, 225, 315],  // W, SW, NW — straight onshore
+        best_wind_dirs: [0, 270, 315],    // N, W, NW
+        worst_wind_dirs: [90, 45, 225],   // E, NE, SW
         wind_push: 0.6,
         nw_rain_penalty: 0.15, southerly_bight: 0.1, tide_sensitive: 0.5,
         plume_reach: 0.2,
@@ -258,8 +259,8 @@ const REGIONS = {
         weather_lat: -39.45, weather_lon: 173.88,
         shelter: 0.4,  river_impact: 0.15, papa_risk: 0.2,  swell_exposure: 0.45,
         // Pipeline: best=N,W,NE — worst=E,SE,S. NW partially valid.
-        best_wind_dirs: [0, 270, 45],     // N, W, NE
-        worst_wind_dirs: [90, 135, 180],  // E, SE, S
+        best_wind_dirs: [315, 270, 0],    // NW, W, N
+        worst_wind_dirs: [180, 135, 90],  // S, SE, E
         wind_push: 0.4,
         nw_rain_penalty: 0.2, southerly_bight: 0.0, tide_sensitive: 0.4,
         trc_sites: [53, 167], // Waingongoro + Waiokura
@@ -272,8 +273,8 @@ const REGIONS = {
         marine_lat: -39.80, marine_lon: 174.35,
         weather_lat: -39.75, weather_lon: 174.50,
         shelter: 0.3,  river_impact: 0.85, papa_risk: 0.85, swell_exposure: 0.90,
-        best_wind_dirs: [225, 90, 180],   // SW, E, S (from offshore pipeline)
-        worst_wind_dirs: [0, 315, 45],    // N, NW, NE
+        best_wind_dirs: [0, 270, 315],    // N, W, NW
+        worst_wind_dirs: [135, 225, 180], // SE, SW, S
         wind_push: 0.15,
         nw_rain_penalty: 0.75, southerly_bight: 0.9, tide_sensitive: 0.85,
         trc_sites: [12], // Mangaehu at Huinga — closest to Patea
@@ -287,8 +288,8 @@ const REGIONS = {
         weather_lat: -39.75, weather_lon: 174.47,
         shelter: 0.2,  river_impact: 0.25, papa_risk: 0.3,  swell_exposure: 0.20,
         // Pipeline: best=SW,E,S — worst=N,SE,NE
-        best_wind_dirs: [225, 90, 180],   // SW, E, S
-        worst_wind_dirs: [0, 135, 45],    // N, SE, NE
+        best_wind_dirs: [180, 225, 135],  // S, SW, SE
+        worst_wind_dirs: [45, 270, 0],    // NE, W, N
         wind_push: 0.5,
         nw_rain_penalty: 0.3, southerly_bight: 0.95, tide_sensitive: 0.2,
         trc_sites: [12], // Mangaehu — same catchment influence
@@ -302,8 +303,8 @@ const REGIONS = {
         weather_lat: -39.00, weather_lon: 174.23,
         shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,
         // Pipeline: best=E,NE,N — worst=S,W,SW. NE not NW.
-        best_wind_dirs: [90, 45, 0],      // E, NE, N
-        worst_wind_dirs: [180, 270, 225], // S, W, SW
+        best_wind_dirs: [0, 315, 45],     // N, NW, NE
+        worst_wind_dirs: [180, 135, 270], // S, SE, W
         wind_push: 0.6,
         nw_rain_penalty: 0.55, southerly_bight: 0.3, tide_sensitive: 0.2,
         trc_sites: [17, 166], // Mangati + Urenui — Waitara area rivers
@@ -342,26 +343,27 @@ const REGIONS = {
     },
 
     spotSeasonal: {
-      "Aeroplane Island":    {1:-20,2:-17,3:1,4:7,5:19,6:14,7:16,8:22,9:14,10:16,11:-13,12:0},
-      "Tokahaki (North Tip)":{1:-20,2:-17,3:1,4:7,5:19,6:14,7:16,8:22,9:14,10:16,11:-13,12:0},
-      "Kāpiti West Face":    {1:-20,2:-17,3:1,4:7,5:19,6:14,7:16,8:22,9:14,10:16,11:-13,12:0},
+      // Real pipeline deltas: clear_pct[month] - annual_avg, from 649-670 MODIS obs each
+      "Aeroplane Island":    {1:-20,2:-19,3:-13,4:+4,5:+2,6:+12,7:+13,8:+18,9:+13,10:-4,11:-8,12:-1},
+      "Tokahaki (North Tip)":{1:+1,2:+1,3:+1,4:+1,5:-4,6:+1,7:-3,8:-1,9:+1,10:+1,11:+1,12:+1},
+      "Kāpiti West Face":    {1:+1,2:+1,3:+1,4:+1,5:-2,6:-2,7:-3,8:+1,9:+1,10:+1,11:+1,12:+1},
     },
 
     seasonalChart: [
-      { month:"Jan", clear:41, blueIdx:3 },
-      { month:"Feb", clear:45, blueIdx:3 },
-      { month:"Mar", clear:63, blueIdx:5 },
+      { month:"Jan", clear:45, blueIdx:2 },
+      { month:"Feb", clear:46, blueIdx:3 },
+      { month:"Mar", clear:52, blueIdx:4 },
       { month:"Apr", clear:69, blueIdx:5 },
-      { month:"May", clear:81, blueIdx:5 },
-      { month:"Jun", clear:76, blueIdx:6 },
+      { month:"May", clear:67, blueIdx:5 },
+      { month:"Jun", clear:77, blueIdx:3 },
       { month:"Jul", clear:78, blueIdx:4 },
-      { month:"Aug", clear:84, blueIdx:3 },
-      { month:"Sep", clear:76, blueIdx:2 },
-      { month:"Oct", clear:78, blueIdx:3 },
-      { month:"Nov", clear:49, blueIdx:2 },
-      { month:"Dec", clear:62, blueIdx:1 },
+      { month:"Aug", clear:83, blueIdx:4 },
+      { month:"Sep", clear:78, blueIdx:4 },
+      { month:"Oct", clear:61, blueIdx:3 },
+      { month:"Nov", clear:57, blueIdx:2 },
+      { month:"Dec", clear:64, blueIdx:1 },
     ],
-    seasonalNote: "674 cloud-free MODIS observations · Kāpiti Island east face",
+    seasonalNote: "649 cloud-free MODIS observations · Aeroplane Island reference spot",
 
     spots: [
       {
@@ -370,8 +372,8 @@ const REGIONS = {
         marine_lat: -40.860, marine_lon: 174.960,
         sat_lat: -40.868, sat_lon: 174.910,
         shelter: 0.3, river_impact: 0.3, papa_risk: 0.0, swell_exposure: 0.35,
-        best_wind_dirs: [45, 135, 180],   // NE, SE (offshore)
-        worst_wind_dirs: [270, 225, 315], // W, SW, NW
+        best_wind_dirs: [0, 45, 315],    // N, NE, NW
+        worst_wind_dirs: [225, 270, 180], // SW, W, S
         wind_push: 0.9,
         sw_flush: 0.9, sw_rain_penalty: 0.3, strait_squeeze: 0.7, tide_sensitive: 0.8,
         rain_recovery_days: 2,
@@ -384,8 +386,8 @@ const REGIONS = {
         marine_lat: -40.840, marine_lon: 174.910,
         sat_lat: -40.840, sat_lon: 174.870,
         shelter: 0.2, river_impact: 0.2, papa_risk: 0.0, swell_exposure: 0.45,
-        best_wind_dirs: [45, 135, 180],
-        worst_wind_dirs: [270, 225, 315],
+        best_wind_dirs: [0, 180, 225],   // N, S, SW
+        worst_wind_dirs: [135, 90, 270],  // SE, E, W
         wind_push: 1.0,
         sw_flush: 1.0, sw_rain_penalty: 0.2, strait_squeeze: 0.9, tide_sensitive: 1.0,
         rain_recovery_days: 2,
@@ -398,8 +400,8 @@ const REGIONS = {
         marine_lat: -40.860, marine_lon: 174.860,
         sat_lat: -40.860, sat_lon: 174.862,
         shelter: 0.5, river_impact: 0.5, papa_risk: 0.0, swell_exposure: 0.6,
-        best_wind_dirs: [90, 135, 45],
-        worst_wind_dirs: [270, 225, 315],
+        best_wind_dirs: [0, 225, 270],   // N, SW, W
+        worst_wind_dirs: [90, 135, 180],  // E, SE, S
         wind_push: 0.4,
         sw_flush: 0.4, sw_rain_penalty: 0.5, strait_squeeze: 0.5, tide_sensitive: 0.6,
         rain_recovery_days: 3,
