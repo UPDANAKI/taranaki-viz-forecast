@@ -1,9 +1,16 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 
 // ══════════════════════════════════════════════════════════════════════════════
+// REGION HELPERS — derive SPOTS and W from active region
+// ══════════════════════════════════════════════════════════════════════════════
+function getSPOTS(regionId) { return REGIONS[regionId]?.spots ?? []; }
+function getW(regionId) { return REGIONS[regionId]?.W ?? REGIONS.taranaki.W; }
+
+// ══════════════════════════════════════════════════════════════════════════════
 // SUPABASE CONFIG — Community Shared Logging
 // ══════════════════════════════════════════════════════════════════════════════
-const SUPABASE_URL = "https://mgcwrktuplnjtxkbsypc.supabase.co";
+// Supabase is now per-region — see REGIONS config
+const SUPABASE_URL = "https://mgcwrktuplnjtxkbsypc.supabase.co"; // Taranaki default
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MjA3MzgsImV4cCI6MjA4ODA5NjczOH0.vk_ylXl3wny0NjIUD9D89324muA74bXx3Mg6Syq8yMA";
 
 async function sbFetch(path, options = {}) {
@@ -24,6 +31,70 @@ async function sbFetch(path, options = {}) {
 }
 async function fetchCommunityLogs() { return sbFetch("/dive_logs?order=created_at.desc&limit=500"); }
 async function insertLog(entry) { return sbFetch("/dive_logs", { method: "POST", body: JSON.stringify(entry), prefer: "return=representation" }); }
+
+// ── Webcam morning readings — Supabase persistence ────────────────────────────
+// Stores one morning (peak solar) webcam turbidity reading per spot per day.
+// Table: webcam_readings  columns: date, spot_name, turbidity, surface_state,
+//                                  cam_name, r, g, b, solar_confidence, fetched_at
+// See webcam_readings_migration.sql to create the table.
+
+function todayNZ() {
+  // Returns NZ local date string YYYY-MM-DD (UTC+12 approx; close enough for daily granularity)
+  const now = new Date();
+  const nz = new Date(now.getTime() + 13 * 3600 * 1000); // NZ is UTC+12/+13, use +13 (NZDT) as safe offset
+  return nz.toISOString().split("T")[0];
+}
+
+async function fetchStoredWebcamReadings(date) {
+  // Returns today's stored readings: { [spotName]: { turbidity, surfaceState, camName, r, g, b, solarConfidence, fetchedAt } }
+  try {
+    const rows = await sbFetch(`/webcam_readings?date=eq.${date}&select=*`);
+    const result = {};
+    for (const row of rows) {
+      result[row.spot_name] = {
+        turbidity: row.turbidity,
+        surfaceState: row.surface_state,
+        camName: row.cam_name,
+        r: row.r, g: row.g, b: row.b,
+        solarConfidence: row.solar_confidence,
+        fetchedAt: new Date(row.fetched_at).getTime(),
+        ageMinutes: (Date.now() - new Date(row.fetched_at).getTime()) / 60000,
+        solarLabel: "☀️ morning (cached)",
+        source: "supabase",
+      };
+    }
+    return result;
+  } catch(e) {
+    console.warn("[Webcam] Failed to load stored readings:", e.message);
+    return {};
+  }
+}
+
+async function upsertWebcamReading(date, spotName, data) {
+  // Upsert a single spot's morning reading into Supabase
+  // Uses ON CONFLICT (date, spot_name) DO UPDATE via Supabase prefer header
+  try {
+    await sbFetch("/webcam_readings", {
+      method: "POST",
+      body: JSON.stringify({
+        date,
+        spot_name: spotName,
+        turbidity: data.turbidity,
+        surface_state: data.surfaceState ?? "unknown",
+        cam_name: data.camName ?? null,
+        r: data.r ?? null,
+        g: data.g ?? null,
+        b: data.b ?? null,
+        solar_confidence: data.solarConfidence ?? null,
+        fetched_at: new Date(data.fetchedAt).toISOString(),
+      }),
+      prefer: "resolution=merge-duplicates",
+    });
+    console.log(`[Webcam] Upserted morning reading for ${spotName}: turbidity=${data.turbidity}`);
+  } catch(e) {
+    console.warn(`[Webcam] Failed to upsert reading for ${spotName}:`, e.message);
+  }
+}
 
 // ── Seed initial dive logs if table is empty ──────────────────────────────────
 const SEED_LOGS = [
@@ -52,84 +123,293 @@ async function seedLogsIfEmpty() {
   }
 }
 
-// ── Spots with per-spot modifiers ─────────────────────────────────────────────
-const SPOTS = [
-  {
-    name: "Motumahanga (Saddleback Is.)",
-    lat: -39.043, lon: 174.015,
-    marine_lat: -39.10, marine_lon: 173.90,
-    weather_lat: -39.055, weather_lon: 174.04,
-    shelter: 0.6,  river_impact: 0.2,  papa_risk: 0.4,  swell_exposure: 0.55,
-    offshore_dir: 135, nw_push: 0.8,  nw_rain_penalty: 0.5, southerly_bight: 0.0, tide_sensitive: 0.3,
-    plume_reach: 0.7,
-    note: "Motumahanga (Saddleback Is.) — outermost Sugar Loaf, ~1.5km offshore. Andesite rock, no papa. Best NW blue-water push. CAUTION: Feb 2026 satellite imagery showed dirty plume extending past the island 3+ days after rain. Model accounts for this — scores will be suppressed post-rain even here.",
-    river: false,
-  },
-  {
-    name: "Nga Motu — Inshore (Port Taranaki)",
-    lat: -39.058, lon: 174.035,
-    sat_lat: -39.058, sat_lon: 174.023,  // 1km W — into harbour, clear of breakwater land pixels
-    marine_lat: -39.10, marine_lon: 173.90,
-    weather_lat: -39.07, weather_lon: 174.08,
-    shelter: 0.85, river_impact: 0.9,  papa_risk: 0.9,  swell_exposure: 0.85,
-    offshore_dir: 90,  nw_push: 0.3,  nw_rain_penalty: 0.9, southerly_bight: 0.0, tide_sensitive: 1.0,
-    note: "Poor flushing. Heavy stormwater/Waiwhakaiho impact. Only good after extended dry calm spells.",
-    river: true,
-  },
-  {
-    name: "Opunake",
-    lat: -39.458, lon: 173.858,
-    sat_lat: -39.464, sat_lon: 173.850,  // 1km SW — offshore into Tasman Sea
-    marine_lat: -39.50, marine_lon: 173.70,
-    weather_lat: -39.45, weather_lon: 173.88,
-    shelter: 0.4,  river_impact: 0.15, papa_risk: 0.2,  swell_exposure: 0.45,
-    offshore_dir: 45,  nw_push: 0.65, nw_rain_penalty: 0.2, southerly_bight: 0.55, tide_sensitive: 0.4,
-    note: "Shore dive facing SW into Tasman. Strong NW blue water bonus — clears fast under NW. SE wind brings south bight dirty water. Low papa + rain shadow under NW. Best fallback in NW conditions.",
-    river: true,
-  },
-  {
-    name: "Fin Fuckers (Cape Egmont)",
-    lat: -39.2794, lon: 173.7520,
-    sat_lat: -39.2794, sat_lon: 173.7404,  // 1km due W — into open Tasman Sea off the point
-    marine_lat: -39.28, marine_lon: 173.60,
-    weather_lat: -39.28, weather_lon: 173.75,
-    shelter: 0.2,  river_impact: 0.10, papa_risk: 0.25, swell_exposure: 0.70,
-    offshore_dir: 90,  nw_push: 0.40, nw_rain_penalty: 0.25, southerly_bight: 0.60, tide_sensitive: 0.5,
-    note: "Shore dive off Bayley Road at the Cape Egmont lighthouse — westernmost point of Taranaki. Fully exposed to Tasman swell but benefits strongly from NW blue water push. Low river impact. Sits on the divide between N and S Taranaki Bights — SE wind pushes south bight dirty water directly onto the point.",
-    river: false,
-  },
-  {
-    name: "Patea — Offshore Trap",
-    lat: -39.8669, lon: 174.5498,
-    marine_lat: -39.90, marine_lon: 174.45,
-    weather_lat: -39.85, weather_lon: 174.55,
-    shelter: 0.2,  river_impact: 0.25, papa_risk: 0.3,  swell_exposure: 0.20,
-    offshore_dir: 315, nw_push: 0.15, nw_rain_penalty: 0.3, southerly_bight: 0.95, tide_sensitive: 0.2,
-    note: "Clean on calm northerly days. Devastated by southerlies — Whanganui/Manawatu water floods in.",
-    river: false,
-  },
-  {
-    name: "The Metal Reef",
-    lat: -38.9756, lon: 174.2769,
-    marine_lat: -38.97, marine_lon: 174.27,
-    weather_lat: -39.00, weather_lon: 174.23,
-    shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,
-    offshore_dir: 135, nw_push: 0.65,  nw_rain_penalty: 0.55, southerly_bight: 0.3, tide_sensitive: 0.2,
-    note: "Reef at 30m — unique diving. Papa country + Waitara River runoff, but distance from river mouth reduces direct impact. Benefits from NW blue water push. Clears faster than inshore papa spots after rain.",
-    river: true,
-  },
-];
+// ══════════════════════════════════════════════════════════════════════════════
+// REGIONS CONFIG — all per-region differences live here
+// Pipeline-calibrated seasonal data (5yr MODIS satellite observations)
+// Wind direction scoring replaces legacy nw_push for Taranaki
+// ══════════════════════════════════════════════════════════════════════════════
 
-// ── Scoring weights ────────────────────────────────────────────────────────────
-const W = {
-  w_swell: 0.55, w_wind: 0.20, w_rain: 0.25,
-  nw_push_mult: 18.0, nw_rain_mult: 20.0,
-  cur_north: 14.0, cur_south: 18.0, bight_mult: 22.0,
-  sst_warm: 8.0, sst_cold: -16.0,
-  tide_mult: 1.0,
-  shelter_mult: 0.10, river_mult: 0.15,
-  hist_2_5: 0.52, hist_2_0: 0.68, hist_1_5: 0.84,
+const REGIONS = {
+
+  taranaki: {
+    id: "taranaki",
+    label: "Taranaki",
+    emoji: "🌋",
+    subtitle: "Sugar Loafs to Patea",
+    mapCenter: [-39.2, 174.05],
+    mapZoom: 9,
+    cloudTile: { zoom: 9, x: 504, y: 319 },
+    rtofs: { lat: -39.10, lon: 173.90 },
+    supabaseUrl: "https://mgcwrktuplnjtxkbsypc.supabase.co",
+    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE",
+    logKey: "taranaki_dive_log",
+    sessionName: "diver_name",
+    sessionWelcome: "welcomed",
+    footer: "Kāpiti Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Supabase · Built for Kāpiti divers 🐟",
+
+    // Scoring weights — Taranaki-calibrated
+    W: {
+      w_swell: 0.45, w_wind: 0.25, w_rain: 0.30,
+      push_mult: 14.0,   // replaces nw_push_mult — per-spot wind dir scoring
+      rain_pen_mult: 20.0,
+      cur_north: 14.0, cur_south: 18.0, bight_mult: 22.0,
+      sst_warm: 8.0, sst_cold: -16.0,
+      tide_mult: 1.0,
+      shelter_mult: 0.10, river_mult: 0.15,
+      hist_2_5: 0.60, hist_2_0: 0.75, hist_1_5: 0.88,
+      seasonal_mult: 1.0,
+    },
+
+    // Seasonal bias per month — derived from pipeline (clear% relative to annual mean)
+    // Each spot has its own curve because Nga Motu is inverted vs the rest
+    // Applied as: score += seasonal[month] * W.seasonal_mult
+    // (null = use spot.seasonal override if defined)
+
+    // Seasonal data by spot name (pipeline-calibrated)
+    spotSeasonal: {
+      "Motumahanga (Saddleback Is.)":
+        {1:6,2:9,3:4,4:1,5:2,6:-22,7:-5,8:-1,9:-1,10:-9,11:2,12:-18},
+      "Nga Motu — Inshore (Port Taranaki)":
+        {1:-8,2:-6,3:-4,4:5,5:-1,6:7,7:7,8:13,9:18,10:19,11:-11,12:-5},
+      "Fin Fuckers (Cape Egmont / Warea)":
+        {1:2,2:4,3:3,4:-3,5:-3,6:-12,7:-4,8:3,9:8,10:1,11:0,12:5},
+      "Opunake":
+        {1:0,2:-2,3:-1,4:-7,5:-4,6:-11,7:-2,8:2,9:11,10:0,11:-1,12:8},
+      "Patea — Inshore":
+        {1:4,2:16,3:16,4:-2,5:-5,6:-24,7:-13,8:-10,9:10,10:-2,11:5,12:-12},
+      "Patea — Offshore Trap":
+        {1:4,2:16,3:16,4:-2,5:-5,6:-24,7:-13,8:-10,9:10,10:-2,11:5,12:-12},
+      "The Metal Reef":
+        {1:6,2:-1,3:8,4:-3,5:3,6:-11,7:-2,8:7,9:0,10:3,11:-6,12:3},
+    },
+
+    // Seasonal chart data for UI (pipeline clear% by month)
+    seasonalChart: [
+      { month:"Jan", clear:67, blueIdx:10 },
+      { month:"Feb", clear:70, blueIdx:11 },
+      { month:"Mar", clear:65, blueIdx:8  },
+      { month:"Apr", clear:52, blueIdx:5  },
+      { month:"May", clear:53, blueIdx:6  },
+      { month:"Jun", clear:27, blueIdx:3  },
+      { month:"Jul", clear:44, blueIdx:3  },
+      { month:"Aug", clear:58, blueIdx:4  },
+      { month:"Sep", clear:59, blueIdx:4  },
+      { month:"Oct", clear:50, blueIdx:5  },
+      { month:"Nov", clear:53, blueIdx:10 },
+      { month:"Dec", clear:43, blueIdx:5  },
+    ],
+    seasonalNote: "674 cloud-free MODIS observations · Motumahanga reference spot",
+
+    spots: [
+      {
+        name: "Motumahanga (Saddleback Is.)",
+        lat: -39.043, lon: 174.022,
+        marine_lat: -39.10, marine_lon: 173.90,
+        weather_lat: -39.055, weather_lon: 174.04,
+        shelter: 0.6,  river_impact: 0.2,  papa_risk: 0.2,  swell_exposure: 0.15,
+        // Pipeline: best=S,SE,SW — worst=N,NW,E. NW push myth busted.
+        best_wind_dirs: [180, 135, 225],  // S, SE, SW
+        worst_wind_dirs: [0, 315, 90],     // N, NW, E
+        wind_push: 0.7,
+        nw_rain_penalty: 0.5, southerly_bight: 0.0, tide_sensitive: 0.3,
+        plume_reach: 0.7,
+        trc_sites: [166, 17], // Urenui (primary), Mangati (secondary)
+        note: "Outermost Sugar Loaf, ~1.5km offshore. Andesite rock, no papa. Pipeline: clean water from S/SE, not NW. Fast recovery (~1 day). Post-rain plume can still reach island.",
+        river: false,
+      },
+      {
+        name: "Nga Motu — Inshore (Port Taranaki)",
+        lat: -39.058, lon: 174.035,
+        marine_lat: -39.10, marine_lon: 173.90,
+        weather_lat: -39.07, weather_lon: 174.08,
+        shelter: 0.85, river_impact: 0.9,  papa_risk: 0.9,  swell_exposure: 0.85,
+        // Pipeline: best=N,NE,NW — worst=S,SE,SW. Inverted seasonal — winter best.
+        best_wind_dirs: [0, 45, 315],     // N, NE, NW
+        worst_wind_dirs: [180, 135, 225], // S, SE, SW
+        wind_push: 0.3,
+        nw_rain_penalty: 0.9, southerly_bight: 0.0, tide_sensitive: 1.0,
+        trc_sites: [166, 17], // Urenui + Mangati — Waiwhakaiho is ungauged but correlates
+        note: "Poor flushing. Heavy stormwater/Waiwhakaiho impact. Pipeline: Oct/Sep best, Jan/Feb worst — inverted vs all other spots. Only good after extended dry calm spells.",
+        river: true,
+      },
+      {
+        name: "Fin Fuckers (Cape Egmont / Warea)",
+        lat: -39.283, lon: 173.748,
+        marine_lat: -39.30, marine_lon: 173.65,
+        weather_lat: -39.29, weather_lon: 173.76,
+        // Cape Egmont point — westernmost tip of Taranaki.
+        // Landmark: replica lighthouse 1 & 2 at Warea Boat Club (Bayly Rd).
+        // West-facing exposure. Benefits from N/NE wind (offshore). Open to SW swell.
+        // No significant rivers nearby — rain effect mainly via direct runoff/papa.
+        shelter: 0.25, river_impact: 0.10, papa_risk: 0.35, swell_exposure: 0.55,
+        best_wind_dirs: [0, 45, 90],       // N, NE, E — all offshore on west face
+        worst_wind_dirs: [270, 225, 315],  // W, SW, NW — straight onshore
+        wind_push: 0.6,
+        nw_rain_penalty: 0.15, southerly_bight: 0.1, tide_sensitive: 0.5,
+        plume_reach: 0.2,
+        trc_sites: [53, 117], // Waingongoro (closest) + Waitaha
+        note: "West-facing cape. Replica lighthouse (Warea Boat Club) is the landmark. Very exposed to westerly swell but clears quickly after rain with no major river input.",
+        river: false,
+      },
+      {
+        name: "Opunake",
+        lat: -39.458, lon: 173.858,
+        marine_lat: -39.50, marine_lon: 173.70,
+        weather_lat: -39.45, weather_lon: 173.88,
+        shelter: 0.4,  river_impact: 0.15, papa_risk: 0.2,  swell_exposure: 0.45,
+        // Pipeline: best=N,W,NE — worst=E,SE,S. NW partially valid.
+        best_wind_dirs: [0, 270, 45],     // N, W, NE
+        worst_wind_dirs: [90, 135, 180],  // E, SE, S
+        wind_push: 0.4,
+        nw_rain_penalty: 0.2, southerly_bight: 0.0, tide_sensitive: 0.4,
+        trc_sites: [53, 167], // Waingongoro + Waiokura
+        note: "Low papa + rain shadow under NW. Clears fastest after rain. Best fallback when other spots blown out.",
+        river: true,
+      },
+      {
+        name: "Patea — Inshore",
+        lat: -39.751, lon: 174.478,
+        marine_lat: -39.80, marine_lon: 174.35,
+        weather_lat: -39.75, weather_lon: 174.50,
+        shelter: 0.3,  river_impact: 0.85, papa_risk: 0.85, swell_exposure: 0.90,
+        best_wind_dirs: [225, 90, 180],   // SW, E, S (from offshore pipeline)
+        worst_wind_dirs: [0, 315, 45],    // N, NW, NE
+        wind_push: 0.15,
+        nw_rain_penalty: 0.75, southerly_bight: 0.9, tide_sensitive: 0.85,
+        trc_sites: [12], // Mangaehu at Huinga — closest to Patea
+        note: "Papa + persistently muddy Patea River + bight exposure. Triple threat in bad conditions.",
+        river: true,
+      },
+      {
+        name: "Patea — Offshore Trap",
+        lat: -39.80, lon: 174.35,
+        marine_lat: -39.80, marine_lon: 174.20,
+        weather_lat: -39.75, weather_lon: 174.47,
+        shelter: 0.2,  river_impact: 0.25, papa_risk: 0.3,  swell_exposure: 0.20,
+        // Pipeline: best=SW,E,S — worst=N,SE,NE
+        best_wind_dirs: [225, 90, 180],   // SW, E, S
+        worst_wind_dirs: [0, 135, 45],    // N, SE, NE
+        wind_push: 0.5,
+        nw_rain_penalty: 0.3, southerly_bight: 0.95, tide_sensitive: 0.2,
+        trc_sites: [12], // Mangaehu — same catchment influence
+        note: "Clean on calm days. Pipeline: SW/E/S best — Whanganui water floods in on N/NE.",
+        river: false,
+      },
+      {
+        name: "The Metal Reef",
+        lat: -38.9756, lon: 174.2769,
+        marine_lat: -38.97, marine_lon: 174.27,
+        weather_lat: -39.00, weather_lon: 174.23,
+        shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,
+        // Pipeline: best=E,NE,N — worst=S,W,SW. NE not NW.
+        best_wind_dirs: [90, 45, 0],      // E, NE, N
+        worst_wind_dirs: [180, 270, 225], // S, W, SW
+        wind_push: 0.6,
+        nw_rain_penalty: 0.55, southerly_bight: 0.3, tide_sensitive: 0.2,
+        trc_sites: [17, 166], // Mangati + Urenui — Waitara area rivers
+        note: "Reef at 30m. Pipeline: clean water from NE not NW. Waitara runoff impact. Most consistent year-round (60-79% clear).",
+        river: true,
+      },
+    ],
+  },
+
+  kapiti: {
+    id: "kapiti",
+    label: "Kāpiti",
+    emoji: "🐠",
+    subtitle: "Kāpiti Island & Cook Strait",
+    mapCenter: [-40.86, 174.92],
+    mapZoom: 10,
+    cloudTile: { zoom: 9, x: 504, y: 335 },
+    rtofs: { lat: -40.85, lon: 174.95 },
+    supabaseUrl: "",  // TODO: new Supabase project
+    supabaseKey: "",
+    logKey: "kapiti_dive_log",
+    sessionName: "kapiti_diver_name",
+    sessionWelcome: "kapiti_welcomed",
+    footer: "Kāpiti Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Supabase · Built for Kāpiti divers 🐟",
+
+    W: {
+      w_swell: 0.40, w_wind: 0.20, w_rain: 0.40,
+      push_mult: 16.0,
+      rain_pen_mult: 14.0,
+      cur_north: 12.0, cur_south: 10.0, bight_mult: 8.0,
+      sst_warm: 6.0, sst_cold: -12.0,
+      tide_mult: 1.2,
+      shelter_mult: 0.08, river_mult: 0.18,
+      hist_2_5: 0.55, hist_2_0: 0.70, hist_1_5: 0.85,
+      seasonal_mult: 1.0,
+    },
+
+    spotSeasonal: {
+      "Aeroplane Island":    {1:-20,2:-17,3:1,4:7,5:19,6:14,7:16,8:22,9:14,10:16,11:-13,12:0},
+      "Tokahaki (North Tip)":{1:-20,2:-17,3:1,4:7,5:19,6:14,7:16,8:22,9:14,10:16,11:-13,12:0},
+      "Kāpiti West Face":    {1:-20,2:-17,3:1,4:7,5:19,6:14,7:16,8:22,9:14,10:16,11:-13,12:0},
+    },
+
+    seasonalChart: [
+      { month:"Jan", clear:41, blueIdx:3 },
+      { month:"Feb", clear:45, blueIdx:3 },
+      { month:"Mar", clear:63, blueIdx:5 },
+      { month:"Apr", clear:69, blueIdx:5 },
+      { month:"May", clear:81, blueIdx:5 },
+      { month:"Jun", clear:76, blueIdx:6 },
+      { month:"Jul", clear:78, blueIdx:4 },
+      { month:"Aug", clear:84, blueIdx:3 },
+      { month:"Sep", clear:76, blueIdx:2 },
+      { month:"Oct", clear:78, blueIdx:3 },
+      { month:"Nov", clear:49, blueIdx:2 },
+      { month:"Dec", clear:62, blueIdx:1 },
+    ],
+    seasonalNote: "674 cloud-free MODIS observations · Kāpiti Island east face",
+
+    spots: [
+      {
+        name: "Aeroplane Island",
+        lat: -40.868, lon: 174.938,
+        marine_lat: -40.860, marine_lon: 174.960,
+        sat_lat: -40.868, sat_lon: 174.910,
+        shelter: 0.3, river_impact: 0.3, papa_risk: 0.0, swell_exposure: 0.35,
+        best_wind_dirs: [45, 135, 180],   // NE, SE (offshore)
+        worst_wind_dirs: [270, 225, 315], // W, SW, NW
+        wind_push: 0.9,
+        sw_flush: 0.9, sw_rain_penalty: 0.3, strait_squeeze: 0.7, tide_sensitive: 0.8,
+        rain_recovery_days: 2,
+        note: "East face of Kāpiti. Pipeline: May-Aug best (76-84%), Jan-Feb worst (41-45%). SW Cook Strait flush drives visibility.",
+        river: false,
+      },
+      {
+        name: "Tokahaki (North Tip)",
+        lat: -40.840, lon: 174.890,
+        marine_lat: -40.840, marine_lon: 174.910,
+        sat_lat: -40.840, sat_lon: 174.870,
+        shelter: 0.2, river_impact: 0.2, papa_risk: 0.0, swell_exposure: 0.45,
+        best_wind_dirs: [45, 135, 180],
+        worst_wind_dirs: [270, 225, 315],
+        wind_push: 1.0,
+        sw_flush: 1.0, sw_rain_penalty: 0.2, strait_squeeze: 0.9, tide_sensitive: 1.0,
+        rain_recovery_days: 2,
+        note: "Most exposed — strongest tidal flushing. Ground truth: 10m vis Feb 28 2026.",
+        river: false,
+      },
+      {
+        name: "Kāpiti West Face",
+        lat: -40.860, lon: 174.882,
+        marine_lat: -40.860, marine_lon: 174.860,
+        sat_lat: -40.860, sat_lon: 174.862,
+        shelter: 0.5, river_impact: 0.5, papa_risk: 0.0, swell_exposure: 0.6,
+        best_wind_dirs: [90, 135, 45],
+        worst_wind_dirs: [270, 225, 315],
+        wind_push: 0.4,
+        sw_flush: 0.4, sw_rain_penalty: 0.5, strait_squeeze: 0.5, tide_sensitive: 0.6,
+        rain_recovery_days: 3,
+        note: "West face — more Waikanae river influence, less Cook Strait flushing.",
+        river: true,
+      },
+    ],
+  },
 };
+
 
 function safe(v) { return (v != null && !isNaN(v)) ? v : 0; }
 
@@ -220,7 +500,7 @@ function recoveryBonus(rainHistory, swellHistory) {
   return 0;
 }
 
-function scoreSpot(cond, spot) {
+function scoreSpot(cond, spot, W) {
   const s  = swellScore(cond.swell_h, cond.swell_p, spot);
   const wn = windScore(cond.wind_spd, cond.wind_dir);
 
@@ -245,29 +525,32 @@ function scoreSpot(cond, spot) {
     ? swellHistoryMultiplier(cond.swellHistory)
     : (cond.swell_hist_72h > 2.5 ? W.hist_2_5 : cond.swell_hist_72h > 2.0 ? W.hist_2_0 : cond.swell_hist_72h > 1.5 ? W.hist_1_5 : 1.0);
 
-  // Swell acts as a ceiling on the other factors — calm wind and clean rain
-  // cannot rescue a day when the swell is too big to dive.
-  // When swell score is low (<40), wind and rain contributions are progressively
-  // capped so total base cannot far exceed the swell score alone.
-  const swellCeiling = s < 40 ? s + 15 : 100; // if swell=29, max base contribution = 44
-  const windRainContrib = Math.min(swellCeiling - s * W.w_swell, wn * W.w_wind + r * W.w_rain);
-  const base = (s * W.w_swell + windRainContrib) * hp;
+  const base = (s * W.w_swell + wn * W.w_wind + r * W.w_rain) * hp;
 
   const recovery = (cond.rainHistory && cond.swellHistory)
-    ? recoveryBonus(cond.rainHistory, cond.swellHistory)
-        * (1 - plumeReach * 0.8)
-        * (cond.swell_h > 1.5 ? 0 : cond.swell_h > 1.0 ? 0.4 : 1.0)  // no recovery credit while swell is running
+    ? recoveryBonus(cond.rainHistory, cond.swellHistory) * (1 - plumeReach * 0.8)
     : 0;
 
-  const offshoreDir = spot.offshore_dir ?? 315;
-  const nwStr = Math.max(0, 1 - Math.abs(((cond.wind_dir - offshoreDir + 360) % 360)) / 45);
+  // Pipeline-calibrated per-spot wind direction scoring (replaces global NW push)
   let nw = 0;
-  if (nwStr >= 0.1) {
-    const push = nwStr * spot.nw_push * Math.min(cond.wind_spd / 15, 1) * W.nw_push_mult;
+  if (spot.best_wind_dirs && cond.wind_spd > 3) {
+    const bestStr = spot.best_wind_dirs.reduce((max, dir) => {
+      const diff = Math.abs(((cond.wind_dir - dir + 360) % 360));
+      const angularMatch = Math.max(0, 1 - Math.min(diff, 360 - diff) / 60);
+      return Math.max(max, angularMatch);
+    }, 0);
+    const worstStr = (spot.worst_wind_dirs || []).reduce((max, dir) => {
+      const diff = Math.abs(((cond.wind_dir - dir + 360) % 360));
+      const angularMatch = Math.max(0, 1 - Math.min(diff, 360 - diff) / 60);
+      return Math.max(max, angularMatch);
+    }, 0);
+    const windSpeedFactor = Math.min(cond.wind_spd / 15, 1);
+    const push = bestStr * (spot.wind_push ?? 0.5) * windSpeedFactor * W.push_mult;
     const rpen = cond.rain_48h > 10
-      ? nwStr * spot.nw_rain_penalty * papaRiskEffective * W.nw_rain_mult
+      ? bestStr * (spot.nw_rain_penalty ?? 0.3) * (papaRiskEffective ?? 0.3) * W.rain_pen_mult
       : 0;
-    nw = push - rpen;
+    const drag = worstStr * windSpeedFactor * (spot.wind_push ?? 0.5) * W.push_mult * 0.6;
+    nw = push - rpen - drag;
   }
 
   const cv = cond.current_vel, cd = cond.current_dir;
@@ -275,7 +558,7 @@ function scoreSpot(cond, spot) {
   const ss = Math.max(0, 1 - Math.abs(((cd - 180 + 360) % 360)) / 50);
   const ns = Math.max(0, 1 - Math.abs(((cd + 360) % 360)) / 60);
   const cur = ns * spd * W.cur_north - ss * spd * W.cur_south
-              - ss * spd * spot.southerly_bight * W.bight_mult;
+              - ss * spd * (spot.southerly_bight ?? 0) * W.bight_mult;
 
   const sst = cond.sst;
   const sstAdj = sst > 18 ? W.sst_warm : sst > 17 ? W.sst_warm * 0.5 : sst > 16 ? 0
@@ -289,67 +572,80 @@ function scoreSpot(cond, spot) {
   const shelter = spot.shelter * Math.max(0, 100 - s) * W.shelter_mult;
   const river   = -riverImpactEffective * (100 - r) * W.river_mult;
 
-  // ── Satellite turbidity adjustment ────────────────────────────────────────
-  // cond.satTurbidity: 0–100 index from MODIS TrueColor pixel sampling.
-  // Treats satellite as ground truth — suppresses score even when weather model
-  // thinks conditions should be good. Calibrated against real observations:
-  //   turbidity=23 + 2.2m swell → actual viz 4m → needs ~25-35pt penalty
-  //   turbidity=87 (Patea Inshore plume) → needs ~70+ pt penalty
-  // Penalty tiers (before age weighting):
-  //   turbidity >60: severe plume  — 45–90 pts
-  //   turbidity 30–60: turbid      — 15–45 pts
-  //   turbidity 10–30: murky       — 0–15 pts  (starts earlier than before)
-  //   turbidity <10: clarity bonus — up to 6 pts
+  // ── Live river turbidity adjustment (TRC gauge data) ─────────────────────
+  // When we have real FNU readings from TRC gauges, use them to amplify or
+  // reduce the rain-based river penalty. High FNU (murky river) = extra penalty.
+  // Low FNU (clear river despite rain) = small relief on the river component.
+  let riverFNUAdj = 0;
+  if (cond.riverTurbScore != null && spot.river_impact > 0.1) {
+    const rts = cond.riverTurbScore; // 0–100 normalised turbidity score
+    const sensitivity = spot.river_impact; // more sensitive spots feel it more
+    if (rts > 60) {
+      // Murky river: add extra penalty proportional to turbidity and river_impact
+      riverFNUAdj = -sensitivity * (rts - 40) * 0.25;
+    } else if (rts < 15) {
+      // Surprisingly clear river: slight relief (river isn't the problem right now)
+      riverFNUAdj = sensitivity * (15 - rts) * 0.12;
+    }
+    // Cap: don't let river gauge swing scores too wildly
+    riverFNUAdj = Math.max(-20, Math.min(8, riverFNUAdj));
+  }
+
+  // ── CHANGE 1: Satellite turbidity adjustment ──────────────────────────────
+  // cond.satTurbidity: 0–100 index from MODIS TrueColor pixel sampling
+  // High satellite turbidity directly suppresses the rain score component,
+  // providing ground-truth correction when satellite data is fresh (< 2 days old).
   let satAdj = 0;
   if (cond.satTurbidity != null && cond.satTurbidityAge != null) {
-    // Age weighting: full at 0 days, ~60% at 2 days, zero at 5+ days
-    const satConfidence = Math.max(0, 1 - cond.satTurbidityAge / 5);
+    // Weight satellite confidence by age: full weight at 0 days, zero at 3+ days
+    const satConfidence = Math.max(0, 1 - cond.satTurbidityAge / 3);
     if (satConfidence > 0) {
-      const t = cond.satTurbidity;
-      let satPenalty = 0;
-      if (t > 60)      satPenalty = 45 + (t - 60) * 1.5;  // 45–90 pts
-      else if (t > 30) satPenalty = 15 + (t - 30) * 1.0;  // 15–45 pts
-      else if (t > 10) satPenalty = (t - 10) * 0.75;       // 0–15 pts
-      satPenalty = Math.min(90, satPenalty) * satConfidence;
-
-      const satBonus = t < 10 ? (10 - t) * 0.6 * satConfidence : 0;
+      // Map turbidity index (0–100) to a rain-equivalent penalty (0–95)
+      // High turbidity (>60) overrides rain model with strong penalty
+      // Low turbidity (<20) provides a small clarity bonus
+      const satPenalty = cond.satTurbidity > 60
+        ? Math.min(95, cond.satTurbidity * 1.2) * satConfidence
+        : cond.satTurbidity > 20
+        ? cond.satTurbidity * 0.6 * satConfidence
+        : 0;
+      const satBonus = cond.satTurbidity < 20
+        ? (20 - cond.satTurbidity) * 0.3 * satConfidence
+        : 0;
       satAdj = satBonus - satPenalty;
     }
   }
 
-  // ── Blue water index override ────────────────────────────────────────────
-  // The satellite blueIndex (0-100) tells us which water mass is at the spot.
-  // This is the dominant visibility driver at Motumahanga and Metal Reef where
-  // the blue/green coastal boundary determines everything.
-  // Oceanic water (blueIndex > 60) directly overrides the rain model --
-  // clear satellite water means good visibility regardless of recent rain history.
-  // Coastal green (blueIndex < 35) compounds any existing penalty.
-  let blueAdj = 0;
-  if (cond.satBlueIndex != null && cond.satTurbidityAge != null) {
-    const blueConf = Math.max(0, 1 - cond.satTurbidityAge / 5);
-    if (blueConf > 0) {
-      const bi = cond.satBlueIndex;
-      if (bi > 75) {
-        // Oceanic water confirmed -- strong clarity override
-        blueAdj = (bi - 75) * 1.2 * blueConf;  // up to +30 pts at bi=100
-      } else if (bi > 55) {
-        // Blue-clear -- moderate clarity signal
-        blueAdj = (bi - 55) * 0.5 * blueConf;  // up to +10 pts
-      } else if (bi < 25) {
-        // Coastal green confirmed -- extra penalty on top of turbidity
-        blueAdj = -(25 - bi) * 0.6 * blueConf; // up to -15 pts
-      }
-      // Trend modifier
-      if (cond.satTrend === "advancing")  blueAdj += 5 * blueConf;
-      if (cond.satTrend === "retreating") blueAdj -= 5 * blueConf;
+  // ── Webcam turbidity adjustment ───────────────────────────────────────────
+  // cond.webcamTurbidity: 0–100 from Primo live camera pixel sampling
+  // Fresh live reads decay over 2 hours. Stored morning reads decay over 12 hours
+  // (captured at peak solar reliability, valid as a "today's baseline").
+  // Also modulated by solar angle — morning light (east sun) dramatically
+  // improves colour contrast and turbidity visibility in west-facing cameras.
+  // Webcam and satellite adjustments are complementary — both can apply.
+  let webcamAdj = 0;
+  if (cond.webcamTurbidity != null && cond.webcamAgeMinutes != null) {
+    const isCached = cond.webcamSource === "supabase";
+    const decayWindow = isCached ? 720 : 120; // 12h for morning cache, 2h for live
+    const ageFade = Math.max(0, 1 - cond.webcamAgeMinutes / decayWindow);
+    const solar = cond.webcamSolarConfidence ?? 0.5; // default moderate if not set
+    const webcamConfidence = ageFade * solar;
+    if (webcamConfidence > 0) {
+      const wt = cond.webcamTurbidity;
+      const penalty = wt > 60
+        ? Math.min(80, wt * 1.0) * webcamConfidence
+        : wt > 25
+        ? wt * 0.5 * webcamConfidence
+        : 0;
+      const bonus = wt < 20 ? (20 - wt) * 0.25 * webcamConfidence : 0;
+      webcamAdj = bonus - penalty;
     }
   }
 
-  const total = base + nw + cur + sstAdj + tideAdj + shelter + river + recovery + satAdj + blueAdj;
+  const total = base + nw + cur + sstAdj + tideAdj + shelter + river + riverFNUAdj + recovery + satAdj + webcamAdj;
   return {
     score: Math.max(0, Math.min(100, Math.round(total))),
     plumeReach: Math.round(plumeReach * 100),
-    factors: { swell: s, wind: wn, rain: r, nw, current: cur, sst: sstAdj, tide: tideAdj, recovery, satellite: satAdj, blueWater: blueAdj },
+    factors: { swell: s, wind: wn, rain: r, nw, current: cur, sst: sstAdj, tide: tideAdj, recovery, satellite: satAdj, webcam: webcamAdj, riverGauge: riverFNUAdj },
   };
 }
 
@@ -410,111 +706,48 @@ function latLonToTilePx(lat, lon, z) {
 // ── Pixel quality classification ─────────────────────────────────────────────
 // Works for BOTH TrueColor (R=red vis, G=green vis, B=blue vis) and
 // Bands721 (R=SWIR band7 2.1µm, G=NIR band2 0.86µm, B=red band1 0.65µm).
-// KEY PRINCIPLE: turbid coastal water (brown/green) must NOT be classified as
-// land — it is the signal we are trying to detect. Land rules must be tight.
+// Cloud/glint detection is band-agnostic (brightness + saturation).
 function classifyPixel(r, g, b, a) {
   if (a < 10) return "transparent";
   const brightness = (r + g + b) / 3;
   const maxCh = Math.max(r, g, b);
   const minCh = Math.min(r, g, b);
   const saturation = maxCh > 0 ? (maxCh - minCh) / maxCh : 0;
-  // Cloud: very bright AND very low saturation (white/grey in both composites)
-  if (brightness > 200 && saturation < 0.10) return "cloud";
-  // Sun glint: very bright regardless of colour
-  if (brightness > 220) return "glint";
-  // Land in Bands721: vegetation has extremely high NIR (green channel g>180)
-  // AND low blue. Turbid water never reaches g>180 in B721.
-  if (g > 180 && b < 70) return "land";
-  // Land in TrueColor: only very saturated green vegetation (not brown water).
-  // Requires green to DOMINATE (g > r AND g > b), be bright, and blue very low.
-  // Brown turbid water has r approx g and both > b -- this rule will not catch it.
-  if (g > r * 1.15 && g > b * 2.0 && g > 120 && b < 60) return "land";
-  // Extremely dark pixels with no signal -- likely deep shadow or data gap
-  if (brightness < 5) return "transparent";
+  // Cloud: very bright AND low saturation (white/grey in both composites)
+  if (brightness > 195 && saturation < 0.12) return "cloud";
+  // Sun glint: extremely bright regardless of colour
+  if (brightness > 215) return "glint";
+  // Land in TrueColor: green/brown with low blue
+  // Land in Bands721: vegetation = very high NIR (green channel), low blue
+  if (g > 160 && b < 80) return "land";               // vegetation (NIR-bright in B721)
+  if (r > b * 1.5 && g > b * 1.2 && b < 90) return "land"; // bare/brown land in TC
   return "water";
 }
 
-// Normalised ocean turbidity index from TrueColor pixel -- illumination-independent
-// Returns 0 (clear deep blue) to 100 (very turbid brown/green)
-// Calibrated for Taranaki coastal water as seen in MODIS JPEG tiles:
-//   Clear offshore:  rgb approx (40,60,90)  -- blue dominant, bn~0.47
-//   Mild turbidity:  rgb approx (55,75,80)  -- blue still leads, bn~0.38
-//   Moderate turbid: rgb approx (80,90,70)  -- green/blue equal, bn~0.28
-//   Heavy plume:     rgb approx (110,100,60) -- red+green dominate, bn~0.22
+// Normalised ocean turbidity index from TrueColor pixel — illumination-independent
+// Returns 0 (clear deep blue) → 100 (very turbid brown/green)
 function calcTurbidity(r, g, b) {
   const total = r + g + b;
-  if (total < 15) return null;
+  if (total < 10) return null;
+  // Normalised band fractions — divide out overall brightness/illumination
   const rn = r / total;
   const gn = g / total;
   const bn = b / total;
-
-  // Primary index: how much blue is suppressed relative to red+green
-  // Clear ocean: bn ~0.47, turbid plume: bn ~0.22
-  const blueSupression = Math.max(0, 0.48 - bn) / 0.26; // 0 at bn=0.48, 1 at bn=0.22
-
-  // Secondary: red+green excess over blue (sediment signal)
-  const warmExcess = Math.max(0, (rn + gn) - 0.55) / 0.25; // 0 at 0.55, 1 at 0.80
-
-  // Green channel spike: phytoplankton blooms push gn high with moderate rn
-  const greenSpike = Math.max(0, gn - 0.34) / 0.12;
-
-  // Combined: blue suppression is the strongest signal, warm excess confirms it
-  const raw = (blueSupression * 0.55 + warmExcess * 0.30 + greenSpike * 0.15) * 100;
+  // Clear offshore ocean: bn ≈ 0.40–0.50 (blue dominates)
+  // Turbid river plume: rn + gn high (0.55–0.70), bn low (0.25–0.35)
+  // Sediment index: weighted red+green vs blue ratio
+  const sedimentIdx = (rn * 0.65 + gn * 0.35) / Math.max(0.01, bn);
+  // Blue bonus: extra clear-water credit when blue fraction is high
+  const bluenessBonus = Math.max(0, bn - 0.38) * 80;
+  const raw = sedimentIdx * 55 - bluenessBonus;
   return Math.min(100, Math.max(0, Math.round(raw)));
-}
-
-// Classifies the water mass type from a TrueColor pixel.
-// Based on Mike's direct observation: oceanic blue water appears very dark
-// navy/black (total brightness low, blue dominant), coastal green water
-// appears as distinctly greenish-grey (brighter, green >= blue).
-//
-// Calibrated against Motumahanga observations:
-//   Oceanic:       rgb(8,15,25)  — very dark, b >> g, total < 50
-//   Blue-clear:    rgb(13,30,36) — dark, b > g, total ~80   ← your "bad day" pixel
-//                                  (blue dominant but coastal green intruding)
-//   Coastal green: rgb(50,70,60) — medium bright, g >= b
-//   Turbid plume:  rgb(86,98,87) — bright, g >= b, warm tones
-//
-// Returns: "oceanic" | "blue_clear" | "coastal_green" | "turbid"
-function classifyWaterMass(r, g, b) {
-  const total = r + g + b;
-  if (total < 10) return null; // no data
-  const bn = b / total;
-  const gn = g / total;
-  const rn = r / total;
-  const brightness = total / 3;
-
-  // Oceanic blue-black: very dark AND blue clearly dominates
-  if (brightness < 25 && b > g && b > r * 2) return "oceanic";
-
-  // Blue-clear: dark-moderate, blue leads over green
-  // (transitional — oceanic water nearby or mixing)
-  if (brightness < 55 && b > g) return "blue_clear";
-
-  // Coastal green: green >= blue, moderate brightness
-  if (g >= b && brightness < 85) return "coastal_green";
-
-  // Turbid/plume: bright, warm or grey tones
-  return "turbid";
-}
-
-// Blue water index: 0 (full coastal/turbid) → 100 (full oceanic)
-// Derived from water mass classification + pixel colour geometry.
-// Used to drive the blue line score bonus/penalty.
-function blueWaterIndex(r, g, b) {
-  const wm = classifyWaterMass(r, g, b);
-  if (!wm) return null;
-  if (wm === "oceanic")      return 90 + Math.min(10, Math.round((25 - (r+g+b)/3) / 2.5));
-  if (wm === "blue_clear")   return 55 + Math.min(35, Math.round((55 - (r+g+b)/3) / 0.9));
-  if (wm === "coastal_green") return 15 + Math.min(30, Math.round((b / Math.max(1,g)) * 40));
-  return Math.max(0, 10 - Math.round(((r+g+b)/3 - 85) / 5)); // turbid
 }
 
 async function sampleGibsTile(layer, date, zoom, fmt, spots) {
   const results = {};
   const tiles = {};
   for (const spot of spots) {
-    const t = latLonToTilePx(spot.sat_lat ?? spot.lat, spot.sat_lon ?? spot.lon, zoom);
+    const t = latLonToTilePx(spot.lat, spot.lon, zoom);
     const key = t.tileX + "," + t.tileY;
     if (!tiles[key]) tiles[key] = { tileX: t.tileX, tileY: t.tileY, spots: [] };
     tiles[key].spots.push({ ...spot, pixelX: t.pixelX, pixelY: t.pixelY });
@@ -538,7 +771,7 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
         img.onload = () => {
           const c = document.createElement("canvas");
           c.width = 256; c.height = 256;
-          const ctx = c.getContext("2d", { willReadFrequently: true });
+          const ctx = c.getContext("2d");
           ctx.drawImage(img, 0, 0);
           resolve((px, py, radius = 2) => {
             const pixels = [];
@@ -561,12 +794,7 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
         try {
           const allPixels = sampleNeighbourhood(spot.pixelX, spot.pixelY, 2);
 
-          // Log every pixel's classification so we can debug misclassifications
-          const classified = allPixels.map(([r, g, b, a]) => ({ r, g, b, a, type: classifyPixel(r, g, b, a) }));
-          const typeCounts = classified.reduce((acc, p) => { acc[p.type] = (acc[p.type]||0) + 1; return acc; }, {});
-          console.log(`[Satellite] ${spot.name} px(${spot.pixelX},${spot.pixelY}) classifications:`, typeCounts);
-
-          // Keep only valid water pixels -- reject cloud, glint, land, transparent
+          // Keep only valid water pixels — reject cloud, glint, land, transparent
           const waterPixels = allPixels.filter(([r, g, b, a]) =>
             classifyPixel(r, g, b, a) === "water"
           );
@@ -584,10 +812,189 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
 
           console.log(`[Satellite] ${spot.name} ${date}: rgb(${r},${g},${b}) turbidity=${turbidity} (${waterPixels.length}/${allPixels.length} valid px)`);
 
-          results[spot.name] = { r, g, b, turbidity, waterMass: classifyWaterMass(r,g,b), blueIndex: blueWaterIndex(r,g,b) };
+          results[spot.name] = { r, g, b, turbidity };
         } catch(e) {}
       }
     } catch(e) {}
+  }
+  return results;
+}
+
+// ── Primo Webcam sampling ─────────────────────────────────────────────────────
+// Samples pixel regions from Primo's live coastal webcams to infer surface
+// turbidity and sea state. Images are CORS-open JPEGs, updated ~every 2 min.
+//
+// Water regions are defined as fractional bounding boxes [x0,y0,x1,y1] over
+// the full image, chosen to cover open sea while avoiding sky, land, and
+// camera housing. Each cam maps to one or more spots.
+//
+// Returns { [spotName]: { turbidity: 0-100, surfaceState: 'calm'|'choppy'|'rough',
+//                         camName, fetchedAt, ageMinutes } }
+
+const PRIMO_CAMS = [
+  {
+    name: "Chimney West",
+    url: "https://www.primo.nz/webcameras/snapshot_chimney_sth.jpg",
+    // Right half of image: open sea beyond Sugar Loafs, y=20-50% avoids sky/land
+    waterRegion: { x0: 0.50, y0: 0.22, x1: 0.95, y1: 0.50 },
+    spots: ["Motumahanga", "Nga Motu / Sugar Loafs"],
+  },
+  {
+    name: "East End SLSC",
+    url: "https://www.primo.nz/webcameras/snapshot_eastend_slsc.jpg",
+    // Upper portion shows open water horizon; avoid sandy beach at bottom
+    waterRegion: { x0: 0.05, y0: 0.10, x1: 0.90, y1: 0.45 },
+    spots: ["Nga Motu / Sugar Loafs"],
+  },
+  {
+    name: "Fitzroy East",
+    url: "https://www.primo.nz/webcameras/snapshot_fitzboardriders.jpg",
+    // Sea visible in upper-right past beach
+    waterRegion: { x0: 0.40, y0: 0.10, x1: 0.90, y1: 0.45 },
+    spots: [],   // NP city beach, not a dive spot — used for sea state reference only
+  },
+];
+
+function calcWebcamTurbidity(r, g, b) {
+  // Similar to calcTurbidity but tuned for real-world camera colour balance.
+  // Clear water is blue-dominant; turbid (plume/silt) shifts toward brown/grey.
+  // Returns 0 (crystal) – 100 (very turbid).
+  const brightness = (r + g + b) / 3;
+  const blueDom = b - Math.max(r, g);           // positive = blue water
+  const brownIndex = (r - b) / (brightness + 1); // positive = brown/turbid
+  const greyFlat = 1 - Math.abs(r - g) / (Math.max(r, g, 1));
+
+  // High brightness + low blue dominance = whitewash/glint — unreliable
+  if (brightness > 200 && blueDom < 10) return null;  // glint
+  // Very dark = night or shadow — skip
+  if (brightness < 20) return null;
+
+  // Score: brownIndex drives turbidity; grey flat water (overcast) is neutral ~40
+  let turb = 50 + brownIndex * 80 - blueDom * 0.5;
+  turb = Math.max(0, Math.min(100, Math.round(turb)));
+  return turb;
+}
+
+function calcWebcamSurfaceState(pixelVariance) {
+  // Pixel brightness variance over the water region indicates surface roughness
+  if (pixelVariance > 800) return "rough";
+  if (pixelVariance > 300) return "choppy";
+  return "calm";
+}
+
+// ── Solar angle / time-of-day webcam confidence ──────────────────────────────
+// Key observation: morning sun (east) backlights the water from behind the viewer
+// (cameras face west toward the sea from Taranaki coast), making turbidity much
+// more visible in the image. Afternoon glare (sun moving west, toward camera)
+// washes out colour contrast and reduces pixel analysis reliability.
+//
+// NZ/Taranaki (UTC+12/+13): Best webcam reads are roughly 6am–11am local time.
+// After noon the sun approaches the camera's west-facing direction and glare
+// increases. We encode this as a solar confidence multiplier applied to the
+// webcam turbidity score weight.
+
+function solarConfidence() {
+  // Returns 0.0–1.0 based on local time of day (NZ timezone approx)
+  // Uses local browser time — user is in Taranaki so this is correct
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60; // 0–24 local
+  // Best window: 6–11am (sun east, backlighting the sea)
+  // Acceptable: 11am–1pm (overhead, neutral)
+  // Poor: 1pm–5pm (sun moving west, toward camera, glare)
+  // Night: unusable
+  if (hour < 5.5 || hour > 19.5) return 0.0;   // dark
+  if (hour >= 6 && hour <= 11)   return 1.0;    // peak morning window
+  if (hour > 11 && hour <= 13)   return 0.7;    // near noon, acceptable
+  if (hour > 13 && hour <= 16)   return 0.35;   // afternoon glare building
+  if (hour > 16 && hour <= 19.5) return 0.15;   // late afternoon, low sun glare
+  if (hour >= 5.5 && hour < 6)   return 0.4;    // pre-dawn/early light
+  return 0.5;
+}
+
+function solarWindowLabel() {
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  if (hour < 5.5 || hour > 19.5) return "🌙 dark";
+  if (hour >= 6 && hour <= 11)   return "☀️ ideal";
+  if (hour > 11 && hour <= 13)   return "🌤 ok";
+  if (hour > 13)                 return "😎 glare";
+  return "🌅 low light";
+}
+
+async function samplePrimoCams(SPOTS) {
+  const results = {};
+  const fetchedAt = Date.now();
+  const solConf = solarConfidence();
+  const solLabel = solarWindowLabel();
+
+  for (const cam of PRIMO_CAMS) {
+    try {
+      const { r, g, b, variance } = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          try {
+            const W = img.naturalWidth, H = img.naturalHeight;
+            const c = document.createElement("canvas");
+            c.width = W; c.height = H;
+            const ctx = c.getContext("2d", { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0);
+
+            const { x0, y0, x1, y1 } = cam.waterRegion;
+            const rx = Math.round(x0 * W), ry = Math.round(y0 * H);
+            const rw = Math.round((x1 - x0) * W), rh = Math.round((y1 - y0) * H);
+
+            // Sample a grid of ~60 points across the water region
+            const samples = [];
+            const cols = 10, rows = 6;
+            for (let row = 0; row < rows; row++) {
+              for (let col = 0; col < cols; col++) {
+                const sx = rx + Math.round((col / (cols - 1)) * rw);
+                const sy = ry + Math.round((row / (rows - 1)) * rh);
+                const px = ctx.getImageData(sx, sy, 1, 1).data;
+                const brightness = (px[0] + px[1] + px[2]) / 3;
+                // Reject very bright (glint/sky) and very dark (shadow) pixels
+                if (brightness > 210 || brightness < 15) continue;
+                samples.push([px[0], px[1], px[2]]);
+              }
+            }
+
+            if (samples.length < 6) { reject(new Error("insufficient valid pixels")); return; }
+
+            // Median pixel
+            samples.sort((a, b) => (a[0]+a[1]+a[2]) - (b[0]+b[1]+b[2]));
+            const med = samples[Math.floor(samples.length / 2)];
+
+            // Variance of brightness across samples
+            const brightnesses = samples.map(s => (s[0]+s[1]+s[2]) / 3);
+            const mean = brightnesses.reduce((a, b) => a + b, 0) / brightnesses.length;
+            const variance = brightnesses.reduce((acc, v) => acc + (v - mean) ** 2, 0) / brightnesses.length;
+
+            resolve({ r: med[0], g: med[1], b: med[2], variance });
+          } catch(e) { reject(e); }
+        };
+        img.onerror = () => reject(new Error("load failed"));
+        img.src = cam.url + "?t=" + fetchedAt;
+        setTimeout(() => reject(new Error("timeout")), 8000);
+      });
+
+      const turbidity = calcWebcamTurbidity(r, g, b);
+      if (turbidity === null) continue;
+      const surfaceState = calcWebcamSurfaceState(variance);
+
+      console.log(`[Webcam] ${cam.name}: rgb(${r},${g},${b}) turb=${turbidity} surf=${surfaceState} var=${Math.round(variance)}`);
+
+      for (const spotName of cam.spots) {
+        // If multiple cams cover a spot, blend by taking the worse (higher) turbidity
+        if (results[spotName]) {
+          results[spotName].turbidity = Math.round((results[spotName].turbidity + turbidity) / 2);
+        } else {
+          results[spotName] = { turbidity, surfaceState, camName: cam.name, r, g, b, fetchedAt, ageMinutes: 0, solarConfidence: solConf, solarLabel: solLabel };
+        }
+      }
+    } catch(e) {
+      console.warn(`[Webcam] ${cam.name} failed:`, e.message);
+    }
   }
   return results;
 }
@@ -711,7 +1118,7 @@ function condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist) {
 
 // ── Forecast builder ──────────────────────────────────────────────────────────
 
-function getDailyScores(marine, weather, spot) {
+function getDailyScores(marine, weather, spot, W) {
   const mTimes = marine?.hourly?.time ?? [];
   const wTimes = weather?.hourly?.time ?? [];
 
@@ -804,7 +1211,7 @@ function getDailyScores(marine, weather, spot) {
       rainHistory,
       swellHistory,
     };
-    const { score, factors } = scoreSpot(cond, spot);
+    const { score, factors } = scoreSpot(cond, spot, W);
     return { date, score, factors, cond };
   });
 }
@@ -820,13 +1227,18 @@ function getAdvice(cond, results) {
   else if (best.score >= 40) tips.push({ e: "🦞", t: `Crays/paua conditions only (3–5m) at ${best.spot.name}. Not great for spearing.` });
   else tips.push({ e: "🚫", t: "Under 3m across all spots — not worth diving. Wait for conditions to settle." });
 
-  const offshoreDir = 315; // NW wind — primary blue-water push for advice tips
-  const nwStr = Math.max(0, 1 - Math.abs(((cond.wind_dir - offshoreDir + 360) % 360)) / 45);
-  if (nwStr > 0.4) {
-    if (cond.rain_48h > 15)
-      tips.push({ e: "🌀", t: `NW wind active — blue water push, but recent rain likely outweighs it. Try Opunake.` });
-    else
-      tips.push({ e: "🌀", t: "NW wind — blue water push active on north coast. Motumahanga (Saddleback Is.) best option." });
+  // Wind direction advice — uses best spot's pipeline-calibrated dirs
+  if (best.spot && best.spot.best_wind_dirs && cond.wind_spd > 5) {
+    const bestStr = best.spot.best_wind_dirs.reduce((max, dir) => {
+      const diff = Math.abs(((cond.wind_dir - dir + 360) % 360));
+      return Math.max(max, Math.max(0, 1 - Math.min(diff, 360-diff) / 60));
+    }, 0);
+    if (bestStr > 0.5) {
+      if (cond.rain_48h > 15)
+        tips.push({ e: "🌀", t: `Favourable wind direction for ${best.spot.name} — but recent rain may outweigh it. Check satellite data.` });
+      else
+        tips.push({ e: "🌀", t: `Wind direction ideal for ${best.spot.name} — clean water push active.` });
+    }
   }
 
   if (cond.sst < 15.5)
@@ -971,11 +1383,51 @@ async function fetchOceanCurrent() {
   return { u: uKt, v: vKt, speed, dir, dirLabel, modelTime: timeStr, ageHrs, valid: true };
 }
 
+// ── TRC River turbidity fetch (via Netlify proxy) ────────────────────────────
+// API: /.netlify/functions/trc-river
+// Returns live FNU readings for 6 Taranaki river gauges, updated every 5 min.
+// Used to refine the river penalty in scoreSpot() with real measured turbidity
+// rather than just estimated rain-based impact.
+
+const TRC_RIVER_SITES = {
+  12:  "Mangaehu at Huinga",
+  17:  "Mangati at SH3",
+  53:  "Waingongoro at SH45",
+  117: "Waitaha at SH3",
+  166: "Urenui at Okoki Rd",
+  167: "Waiokura at No3 Fairway",
+};
+
+// FNU → normalised turbidity score (0=crystal, 100=chocolate milk)
+// Taranaki rivers: <5 FNU = clear, 5–50 = elevated, 50–200 = high, >200 = flood
+function fnuToScore(fnu) {
+  if (fnu == null) return null;
+  if (fnu < 3)   return 0;
+  if (fnu < 10)  return Math.round(fnu / 10 * 15);          // 0–15
+  if (fnu < 50)  return Math.round(15 + (fnu - 10) / 40 * 35); // 15–50
+  if (fnu < 200) return Math.round(50 + (fnu - 50) / 150 * 35); // 50–85
+  return Math.min(100, Math.round(85 + (fnu - 200) / 100 * 15)); // 85–100
+}
+
+async function fetchTRCRiverData() {
+  // In development (localhost) hit TRC directly (same origin via Vite proxy won't work,
+  // so we skip and return null — scoring falls back to rain model).
+  const isDev = window.location.hostname === "localhost";
+  if (isDev) return null;
+  const res = await fetch("/.netlify/functions/trc-river", {
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`TRC proxy HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || "TRC proxy error");
+  return json.sites; // { [siteId]: { name, latestFNU, latestTime, trend, recentMax, recentAvg, sparkline } }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // CONSOLIDATED DATA HOOK
 // ══════════════════════════════════════════════════════════════════════════════
 
-function useAllSpotsData(logEntries) {
+function useAllSpotsData(logEntries, SPOTS, W, region) {
   // ── Shared ocean data ────────────────────────────────────────────────────
   const [currentData, setCurrentData]     = useState(null);
   const [currentStatus, setCurrentStatus] = useState("idle");
@@ -984,6 +1436,14 @@ function useAllSpotsData(logEntries) {
   const [satData, setSatData]     = useState({});   // { [spotName]: { turbidity, r, g, b, date, agedays } }
   const [satStatus, setSatStatus] = useState("idle");
   const satRef = useRef({});
+
+  const [webcamData, setWebcamData]     = useState({});  // { [spotName]: { turbidity, surfaceState, camName, fetchedAt, ageMinutes } }
+  const [webcamStatus, setWebcamStatus] = useState("idle");
+  const webcamRef = useRef({});
+
+  const [riverData, setRiverData]     = useState({});  // { [siteId]: { name, latestFNU, latestTime, trend, ... } }
+  const [riverStatus, setRiverStatus] = useState("idle");
+  const riverRef = useRef({});
 
   // ── Per-spot scored data ─────────────────────────────────────────────────
   const [spotDataMap, setSpotDataMap]     = useState({});
@@ -995,6 +1455,8 @@ function useAllSpotsData(logEntries) {
   useEffect(() => { currentRef.current  = currentData;  }, [currentData]);
   // CHANGE 2: Keep satRef in sync
   useEffect(() => { satRef.current = satData; }, [satData]);
+  useEffect(() => { webcamRef.current = webcamData; }, [webcamData]);
+  useEffect(() => { riverRef.current  = riverData;  }, [riverData]);
 
   const computeSpotResult = useCallback((spot, marine, weather, rtofs, entries) => {
     const mTimes = marine.hourly?.time ?? [];
@@ -1017,29 +1479,58 @@ function useAllSpotsData(logEntries) {
     // CHANGE 2: Pull satellite turbidity for this spot if available
     const satSpot = satRef.current?.[spot.name];
     const satOverride = satSpot
-      ? { satTurbidity: satSpot.turbidity, satTurbidityAge: satSpot.agedays,
-          satBlueIndex: satSpot.blueIndex, satWaterMass: satSpot.waterMass, satTrend: satSpot.trend }
+      ? { satTurbidity: satSpot.turbidity, satTurbidityAge: satSpot.agedays }
       : {};
+
+    // Webcam turbidity for this spot if available
+    const webcamSpot = webcamRef.current?.[spot.name];
+    const webcamOverride = webcamSpot
+      ? { webcamTurbidity: webcamSpot.turbidity, webcamAgeMinutes: webcamSpot.ageMinutes, webcamSolarConfidence: webcamSpot.solarConfidence ?? 0.5, webcamSource: webcamSpot.source ?? "live" }
+      : {};
+
+    // River turbidity from TRC gauges — blend primary + secondary site readings
+    // weighted by river_impact. Higher FNU → amplify river penalty in scoreSpot.
+    let riverOverride = {};
+    if (spot.trc_sites && riverRef.current && Object.keys(riverRef.current).length > 0) {
+      const sites = spot.trc_sites.map(id => riverRef.current[id]).filter(Boolean);
+      if (sites.length > 0) {
+        // Weighted average: primary site (first) gets 70%, secondary gets 30%
+        const weights = sites.length === 1 ? [1] : [0.7, 0.3];
+        const weightedFNU = sites.reduce((sum, site, i) => sum + (site.latestFNU ?? 0) * (weights[i] ?? 0.15), 0);
+        const maxFNU = Math.max(...sites.map(s => s.recentMax ?? s.latestFNU ?? 0));
+        // Rising trend amplifies impact (river hasn't peaked yet)
+        const trendFactor = sites[0].trend > 5 ? 1.3 : sites[0].trend > 1 ? 1.1 : 1.0;
+        riverOverride = {
+          riverFNU: weightedFNU,
+          riverMaxFNU: maxFNU,
+          riverTrendFactor: trendFactor,
+          riverTurbScore: fnuToScore(weightedFNU * trendFactor),
+        };
+      }
+    }
 
     const cond = {
       ...condBase,
       ...rtofsOverride,
       ...satOverride,
+      ...webcamOverride,
+      ...riverOverride,
       rainHistory: rainHist,
       swellHistory: swellHist,
     };
 
-    const { score: rawScore, factors, plumeReach } = scoreSpot(cond, spot);
+    const { score: rawScore, factors, plumeReach } = scoreSpot(cond, spot, W);
 
     const biasMult = spotBiasMultiplier(spot.name, entries || []);
     let score = applyBias(rawScore, biasMult);
 
-    const forecast = getDailyScores(marine, weather, spot);
+    const forecast = getDailyScores(marine, weather, spot, W);
 
     return {
       cond, score, rawScore, factors, forecast, biasMult,
       plumeReach: plumeReach ?? 0,
       satData: satRef.current?.[spot.name] ?? null,
+      webcamData: webcamRef.current?.[spot.name] ?? null,
     };
   }, []);
 
@@ -1069,6 +1560,10 @@ function useAllSpotsData(logEntries) {
 
   // CHANGE 3: Rescore when satellite turbidity arrives
   useEffect(() => { rescoreAll(); }, [satData, rescoreAll]);
+  // Rescore when webcam data arrives
+  useEffect(() => { rescoreAll(); }, [webcamData, rescoreAll]);
+  // Rescore when river data arrives
+  useEffect(() => { rescoreAll(); }, [riverData, rescoreAll]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1086,121 +1581,114 @@ function useAllSpotsData(logEntries) {
       const satPromise = (async () => {
         try {
           // Walk back up to 14 days to find a cloud-free MODIS Aqua tile.
-          // Probe uses zoom 7, tile centred on Taranaki (x=124, y=77) -- a
-          // ~150km tile covering just the Taranaki coast, much tighter than
-          // the old zoom-5 tile which covered half of NZ and would pass the
-          // 25% water threshold even when Taranaki itself was fully cloud-covered.
-          // Helper: probe a single date for cloud cover
-          const probeDate = async (dateStr) => {
-            return Promise.race([
+          // Uses classifyPixel() to count valid water pixels — if >30% of sampled
+          // pixels are water (not cloud/glint/land) we consider the tile usable.
+          // Each probe has a 5s timeout so a hanging image can't stall the chain.
+          let tcDate = null;
+          for (let n = 1; n <= 14; n++) {
+            const d = new Date();
+            d.setDate(d.getDate() - n);
+            const dateStr = d.toISOString().split("T")[0];
+            const hasData = await Promise.race([
               new Promise(resolve => {
                 const img = new Image();
                 img.crossOrigin = "anonymous";
-                img.src = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/9/316/503.jpg`;
+                // Probe tile centred on Taranaki coast (zoom 5, tile x=31 y=19 in WMTS coords)
+                img.src = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/5/19/31.jpg`;
                 img.onload = () => {
                   try {
-                    const c = document.createElement("canvas"); c.width = 64; c.height = 64;
-                    const ctx = c.getContext("2d", { willReadFrequently: true }); ctx.drawImage(img, 0, 0, 64, 64);
+                    const c = document.createElement("canvas");
+                    c.width = 64; c.height = 64;
+                    const ctx = c.getContext("2d");
+                    ctx.drawImage(img, 0, 0, 64, 64);
                     const data = ctx.getImageData(0, 0, 64, 64).data;
                     let waterCount = 0, total = 0;
                     for (let i = 0; i < data.length; i += 4) {
-                      const [r,g,b,a] = [data[i],data[i+1],data[i+2],data[i+3]];
-                      if (a < 10) continue; total++;
-                      if (classifyPixel(r,g,b,a) === "water") waterCount++;
+                      const [r, g, b, a] = [data[i], data[i+1], data[i+2], data[i+3]];
+                      if (a < 10) continue;
+                      total++;
+                      if (classifyPixel(r, g, b, a) === "water") waterCount++;
                     }
-                    resolve((total > 0 ? waterCount/total : 0) > 0.30);
+                    const waterFraction = total > 0 ? waterCount / total : 0;
+                    console.log(`[Satellite probe] ${dateStr}: ${waterCount}/${total} water pixels (${(waterFraction*100).toFixed(0)}%)`);
+                    resolve(waterFraction > 0.25); // need at least 25% valid ocean pixels
                   } catch { resolve(true); }
                 };
                 img.onerror = () => resolve(false);
               }),
-              new Promise(resolve => setTimeout(() => resolve(false), 5000)),
+              new Promise(resolve => setTimeout(() => resolve(false), 5000)), // 5s timeout per probe
             ]);
-          };
-
-          // Helper: fetch TrueColor + B721 pixels for one date, return per-spot data
-          const fetchDayData = async (dateStr) => {
-            const [tcPixels, b721Pixels] = await Promise.all([
-              sampleGibsTile("MODIS_Aqua_CorrectedReflectance_TrueColor", dateStr, 9, "jpg", SPOTS),
-              sampleGibsTile("MODIS_Aqua_CorrectedReflectance_Bands721",   dateStr, 9, "jpg", SPOTS),
-            ]);
-            const dayResult = {};
-            SPOTS.forEach(s => {
-              const tc = tcPixels[s.name];
-              const b721 = b721Pixels[s.name];
-              if (!tc && !b721) return;
-              let turbidity = null, turbiditySource = null;
-              if (tc?.turbidity != null) { turbidity = tc.turbidity; turbiditySource = "truecolor"; }
-              if (b721) {
-                const { r, g, b } = b721;
-                const total = r + g + b;
-                if (total > 40 && r > g) {
-                  const swirExcess = (r - g) / total;
-                  const b721Turb = Math.min(100, Math.max(0, Math.round(swirExcess / 0.15 * 100)));
-                  if (turbidity === null) { turbidity = b721Turb; turbiditySource = "bands721"; }
-                  else if (b721Turb > turbidity) { turbidity = Math.round(turbidity * 0.4 + b721Turb * 0.6); turbiditySource = "bands721+tc"; }
-                }
-              }
-              const wmr = tc?.r ?? 0, wmg = tc?.g ?? 0, wmb = tc?.b ?? 0;
-              dayResult[s.name] = {
-                turbidity, turbiditySource,
-                r: wmr, g: wmg, b: wmb,
-                waterMass: classifyWaterMass(wmr, wmg, wmb),
-                blueIndex: blueWaterIndex(wmr, wmg, wmb),
-              };
-              console.log(`[Sat ${dateStr}] ${s.name}: rgb(${wmr},${wmg},${wmb}) turbidity=${turbidity} waterMass=${dayResult[s.name].waterMass} blueIdx=${dayResult[s.name].blueIndex}`);
-            });
-            return dayResult;
-          };
-
-          // Find up to 3 cloud-free dates (most recent first) — enables trend detection
-          const clearDates = [];
-          for (let n = 1; n <= 14 && clearDates.length < 3; n++) {
-            const d2 = new Date(); d2.setDate(d2.getDate() - n);
-            const dStr = d2.toISOString().split("T")[0];
-            if (await probeDate(dStr)) clearDates.push(dStr);
+            if (hasData) { tcDate = dateStr; break; }
           }
-          if (clearDates.length === 0) {
-            console.warn("[Satellite] No cloud-free dates found in 14-day window — skipping satellite scoring");
-            if (!cancelled) setSatStatus("error");
-            return;
-          }
+          if (!tcDate) tcDate = (() => { const d = new Date(); d.setDate(d.getDate() - 3); return d.toISOString().split("T")[0]; })();
 
-          // Fetch all clear dates in parallel
-          const allDaysData = await Promise.all(clearDates.map(fetchDayData));
+          // Fetch both layers in parallel:
+          //   TrueColor  → display swatch shown to user (natural looking)
+          //   Bands721   → turbidity scoring (bands 7-2-1 false colour;
+          //                sediment/turbid water = bright red/magenta,
+          //                clear deep water = dark blue/black, cloud = white)
+          //                The red channel (band 7, 2.1µm SWIR) is a direct
+          //                proxy for suspended sediment — illumination-independent
+          //                and much less affected by sun glint than visible bands.
+          const [tcPixels, b721Pixels] = await Promise.all([
+            sampleGibsTile("MODIS_Aqua_CorrectedReflectance_TrueColor", tcDate, 9, "jpg", SPOTS),
+            sampleGibsTile("MODIS_Aqua_CorrectedReflectance_Bands721",   tcDate, 9, "jpg", SPOTS),
+          ]);
 
-          const todayDate = new Date();
-          const primaryDate = clearDates[0];
-          const primaryData = allDaysData[0];
-          const primaryAge = Math.round((todayDate - new Date(primaryDate + "T00:00:00")) / 86400000);
-
-          // Compute blue line trend per spot: compare blueIndex oldest -> newest
-          const computeTrend = (spotName) => {
-            const indices = allDaysData.map(d => d[spotName]?.blueIndex ?? null).filter(v => v !== null);
-            if (indices.length < 2) return "unknown";
-            const oldest = indices[indices.length - 1];
-            const newest = indices[0];
-            const delta = newest - oldest;
-            if (delta > 15)  return "advancing";   // blue water moving inshore
-            if (delta < -15) return "retreating";   // blue water pulling offshore
-            if (newest > 60) return "stable_blue";  // consistently oceanic
-            if (newest < 30) return "stable_green"; // consistently coastal green
-            return "stable";
-          };
+          const today = new Date();
+          const imgDate = new Date(tcDate + "T00:00:00");
+          const agedays = Math.round((today - imgDate) / 86400000);
 
           const result = {};
           SPOTS.forEach(s => {
-            const primary = primaryData[s.name];
-            if (!primary) return;
+            const tc   = tcPixels[s.name];
+            const b721 = b721Pixels[s.name];
+
+            // Need at least the TrueColor pixel to show a swatch
+            if (!tc && !b721) return;
+
+            let turbidity = null;
+            let turbiditySource = null;
+
+            if (b721) {
+              // Bands 7-2-1 turbidity: in this composite, band 7 (SWIR 2.1µm)
+              // maps to the RED channel. High red = high suspended sediment.
+              // Band 2 (NIR 0.86µm) maps to GREEN. Band 1 (red 0.65µm) maps to BLUE.
+              // We use normalised red fraction as the sediment index — this is
+              // essentially a SWIR-based NDTI analogue, robust to sun glint and
+              // atmospheric haze which mostly affect visible wavelengths.
+              const { r, g, b } = b721;
+              const total = r + g + b;
+              if (total > 10) {
+                const swirFraction  = r / total;   // band 7 SWIR — sediment proxy
+                const nirFraction   = g / total;   // band 2 NIR
+                const redFraction   = b / total;   // band 1 red
+                // Clear water: swirFraction low (~0.20), nirFraction moderate
+                // Turbid/sediment: swirFraction high (0.45–0.70)
+                // Scale 0.20–0.65 range to 0–100
+                const raw = (swirFraction - 0.18) / (0.60 - 0.18) * 100;
+                turbidity = Math.min(100, Math.max(0, Math.round(raw)));
+                turbiditySource = "bands721";
+                console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
+              }
+            }
+
+            // Fall back to TrueColor turbidity if Bands721 pixel was rejected
+            if (turbidity === null && tc?.turbidity != null) {
+              turbidity = tc.turbidity;
+              turbiditySource = "truecolor";
+              console.log(`[Satellite TC fallback] ${s.name}: turbidity=${turbidity}`);
+            }
+
             result[s.name] = {
-              ...primary,
-              date: primaryDate,
-              agedays: primaryAge,
-              trend: computeTrend(s.name),
-              blueHistory: clearDates.map((date, i) => ({
-                date,
-                blueIndex: allDaysData[i][s.name]?.blueIndex ?? null,
-                waterMass: allDaysData[i][s.name]?.waterMass ?? null,
-              })),
+              turbidity,
+              turbiditySource,
+              // Display swatch uses TrueColor RGB (natural looking) with B721 as fallback
+              r: tc?.r ?? b721?.r ?? 0,
+              g: tc?.g ?? b721?.g ?? 0,
+              b: tc?.b ?? b721?.b ?? 0,
+              date: tcDate,
+              agedays,
             };
           });
 
@@ -1208,8 +1696,8 @@ function useAllSpotsData(logEntries) {
             satRef.current = result;
             setSatData(result);
             setSatStatus("ok");
-            console.log(`[Satellite] Loaded. Primary: ${primaryDate} (${primaryAge}d). Clear dates: ${clearDates.join(", ")}`,
-              Object.fromEntries(Object.entries(result).map(([k,v]) => [k, `${v.waterMass} idx=${v.blueIndex} trend=${v.trend}`]))
+            console.log(`[Satellite] Turbidity data loaded from ${tcDate} (${agedays} days old):`,
+              Object.fromEntries(Object.entries(result).map(([k, v]) => [k, v.turbidity]))
             );
           }
         } catch(e) {
@@ -1217,6 +1705,69 @@ function useAllSpotsData(logEntries) {
           if (!cancelled) setSatStatus("error");
         }
       })();
+
+      // ── Webcam: morning-cache strategy ──────────────────────────────────────
+      // 1. Always try to load today's stored morning reading from Supabase first.
+      // 2. If it's the morning solar window (6–11am) AND no reading exists yet
+      //    for today, do a live camera fetch and store the result.
+      // 3. Outside the morning window, use stored reading only (avoids glare).
+      // Only runs for Taranaki — cams are NP-based.
+      let webcamPromise = Promise.resolve();
+      if (region === "taranaki") {
+        setWebcamStatus("loading");
+        webcamPromise = (async () => {
+          try {
+            const today = todayNZ();
+            const hour = new Date().getHours() + new Date().getMinutes() / 60;
+            const isMorningWindow = hour >= 6 && hour <= 11;
+
+            // Step 1: check for an existing stored reading today
+            let stored = await fetchStoredWebcamReadings(today);
+            const hasStoredToday = Object.keys(stored).length > 0;
+
+            if (hasStoredToday) {
+              // Use stored morning reading — update age but keep original turbidity
+              const now = Date.now();
+              Object.values(stored).forEach(v => {
+                v.ageMinutes = (now - v.fetchedAt) / 60000;
+                v.solarLabel = "☀️ morning (cached)";
+              });
+              if (!cancelled) {
+                webcamRef.current = stored;
+                setWebcamData(stored);
+                setWebcamStatus("ok");
+                console.log(`[Webcam] Loaded ${Object.keys(stored).length} stored morning readings for ${today}`);
+              }
+            } else if (isMorningWindow) {
+              // Step 2: morning window, no stored reading — do live fetch and store
+              console.log("[Webcam] Morning window, no stored reading — sampling cameras live");
+              const liveResult = await samplePrimoCams(SPOTS);
+              if (!cancelled && Object.keys(liveResult).length > 0) {
+                Object.values(liveResult).forEach(v => { v.ageMinutes = 0; });
+
+                // Store each spot's reading in Supabase (non-blocking)
+                for (const [spotName, data] of Object.entries(liveResult)) {
+                  upsertWebcamReading(today, spotName, data).catch(() => {});
+                }
+
+                webcamRef.current = liveResult;
+                setWebcamData(liveResult);
+                setWebcamStatus("ok");
+                console.log("[Webcam] Live morning fetch complete, stored to Supabase:", Object.fromEntries(Object.entries(liveResult).map(([k,v]) => [k, v.turbidity])));
+              } else if (!cancelled) {
+                setWebcamStatus("no-data");
+              }
+            } else {
+              // Afternoon/evening with no stored reading — report that
+              console.log("[Webcam] No stored morning reading for today and outside morning window — skipping live fetch");
+              if (!cancelled) setWebcamStatus("no-morning-data");
+            }
+          } catch(e) {
+            console.warn("[Webcam] fetch/store failed:", e);
+            if (!cancelled) setWebcamStatus("error");
+          }
+        })();
+      }
 
       // Fetch weather + marine for all spots — staggered to avoid rate limiting
       // (18 simultaneous requests to Open-Meteo triggers 400s on their free tier)
@@ -1308,17 +1859,40 @@ function useAllSpotsData(logEntries) {
         }
       });
 
+      // Fire TRC river turbidity fetch in background (Taranaki only — Netlify proxy)
+      let riverPromise = Promise.resolve();
+      if (region === "taranaki") {
+        setRiverStatus("loading");
+        riverPromise = (async () => {
+          try {
+            const sites = await fetchTRCRiverData();
+            if (sites && !cancelled) {
+              riverRef.current = sites;
+              setRiverData(sites);
+              setRiverStatus("ok");
+            } else if (!cancelled) {
+              setRiverStatus("no-data");
+            }
+          } catch(e) {
+            if (!cancelled) setRiverStatus("error");
+            console.warn("[TRC River] fetch failed:", e.message);
+          }
+        })();
+      }
+
       await Promise.all([
         ...spotPromises,
         rtofsPromise,
-        Promise.race([satPromise, new Promise(r => setTimeout(r, 30000))]), // sat can't block >30s
+        Promise.race([satPromise,   new Promise(r => setTimeout(r, 30000))]),    // sat can't block >30s
+        Promise.race([webcamPromise, new Promise(r => setTimeout(r, 15000))]),   // webcam max 15s
+        Promise.race([riverPromise,  new Promise(r => setTimeout(r, 12000))]),   // river max 12s
       ]);
       if (!cancelled) setLoading(false);
     }
 
     fetchAll();
     return () => { cancelled = true; };
-  }, []);
+  }, [SPOTS]);
 
   // CHANGE 3: Expose satData and satStatus
   return {
@@ -1329,6 +1903,10 @@ function useAllSpotsData(logEntries) {
     currentStatus,
     satData,
     satStatus,
+    webcamData,
+    webcamStatus,
+    riverData,
+    riverStatus,
   };
 }
 
@@ -1458,8 +2036,6 @@ function WindForecastBar({ days }) {
 function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunitySave, isConfigured }) {
   const [vis, setVis] = useState("");
   const [tide, setTide] = useState("high");
-  const [currentStrength, setCurrentStrength] = useState("none");
-  const [currentDirection, setCurrentDirection] = useState(null);
   const [notes, setNotes] = useState("");
   const [date, setDate] = useState(new Date().toLocaleDateString("en-CA"));
   const [name, setName] = useState(diverName || "");
@@ -1475,8 +2051,6 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
     const localEntry = {
       id: Date.now(), date, spot: spot.name,
       observedVis: v, tide, modelScore,
-      current_strength: currentStrength,
-      current_direction: currentStrength !== "none" ? currentDirection : null,
       notes: notes.trim(), diver_name: name.trim(),
     };
     const existing = loadLog();
@@ -1489,8 +2063,6 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
         await onCommunitySave({
           diver_name: name.trim(), date, spot: spot.name,
           observed_vis: v, tide, model_score: modelScore,
-          current_strength: currentStrength,
-          current_direction: currentStrength !== "none" ? currentDirection : null,
           notes: notes.trim(),
         });
       } catch(e) {
@@ -1531,28 +2103,6 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
             ))}
           </div>
         </div>
-        <div className="modal-field">
-          <label>Current Strength</label>
-          <div className="tide-buttons">
-            {[["none","None"],["light","Light"],["moderate","Moderate"],["strong","Strong"]].map(([val,label]) => (
-              <button key={val} className={`tide-btn ${currentStrength === val ? "active" : ""}`}
-                onClick={() => { setCurrentStrength(val); if (val === "none") setCurrentDirection(null); }}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {currentStrength !== "none" && (
-          <div className="modal-field">
-            <label>Current Direction <span style={{fontWeight:400,color:"#3a6070",fontSize:"0.78rem"}}>(water flowing toward)</span></label>
-            <div className="compass-picker">
-              {["N","NE","E","SE","S","SW","W","NW"].map(dir => (
-                <button key={dir} className={`compass-btn compass-${dir} ${currentDirection === dir ? "active" : ""}`}
-                  onClick={() => setCurrentDirection(dir)}>{dir}</button>
-              ))}
-            </div>
-          </div>
-        )}
         <div className="modal-field">
           <label>Notes (optional)</label>
           <textarea placeholder="Water colour, fish activity, conditions..." value={notes}
@@ -1640,7 +2190,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                 stroke={`url(#grad-${spot.name.replace(/\W/g, "")})`}
                 strokeWidth="8" strokeLinecap="round"
                 strokeDasharray="157"
-                strokeDashoffset={157 - (score / 100) * 157}
+                strokeDashoffset={157 - ((score ?? 0) / 100) * 157}
                 style={{ transition: "stroke-dashoffset 1s ease" }}
               />
               <text x="60" y="52" textAnchor="middle" fill={color} fontSize="18" fontWeight="bold" fontFamily="'Space Mono', monospace">{score}</text>
@@ -1649,7 +2199,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
           </div>
 
           <div className="viz-label" style={{ color }}>
-            {score >= 80 ? "🤿" : score >= 60 ? "🐟" : score >= 40 ? "🦞" : score >= 20 ? "🌊" : "🚫"}{" "}
+            {(score ?? 0) >= 80 ? "🤿" : (score ?? 0) >= 60 ? "🐟" : (score ?? 0) >= 40 ? "🦞" : (score ?? 0) >= 20 ? "🌊" : "🚫"}{" "}
             {scoreToLabel(score)}
             {data.biasMult && Math.abs(data.biasMult - 1.0) >= 0.05 && (
               <span className="bias-indicator" title={`Bias-adjusted from raw score ${data.rawScore}`}>
@@ -1697,52 +2247,55 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                 })() },
               { icon: "🌧", val: `${data.cond.rain_48h.toFixed(1)}mm`, key: "Rain 48h" },
               { icon: "🌡️", val: `${data.cond.sst.toFixed(1)}°C`, key: "SST" },
-              // Satellite: turbidity + blue water state
+              // CHANGE 4: Satellite turbidity row
               ...(data.satData ? [{
                 icon: "🛰️",
                 val: (() => {
-                  const sat = data.satData;
-                  const t = sat.turbidity;
-                  const bi = sat.blueIndex;
-                  const age = sat.agedays;
-                  const trend = sat.trend;
-
-                  // Water mass label + colour
-                  const wmLabels = { oceanic:"🔵 Oceanic", blue_clear:"🔵 Blue-Clear", coastal_green:"🟢 Coastal Green", turbid:"🟤 Turbid" };
-                  const wmColors = { oceanic:"#00e5a0", blue_clear:"#60b8f0", coastal_green:"#88b840", turbid:"#e03030" };
-                  const wm = sat.waterMass ?? (t > 60 ? "turbid" : t > 30 ? "coastal_green" : t > 10 ? "blue_clear" : "oceanic");
-                  const wmLabel = wmLabels[wm] ?? wm;
-                  const wmColor = wmColors[wm] ?? "#607d8b";
-
-                  // Trend arrow
-                  const trendLabel = trend === "advancing" ? " ↗ advancing" : trend === "retreating" ? " ↘ retreating" : trend === "stable_blue" ? " → stable" : trend === "stable_green" ? " → stable" : "";
-                  const trendColor = trend === "advancing" ? "#00e5a0" : trend === "retreating" ? "#e06040" : "#607d8b";
-
-                  // Blue history dots
-                  const histDots = sat.blueHistory?.map((h, i) => {
-                    const dotColor = h.blueIndex > 60 ? "#00e5a0" : h.blueIndex > 35 ? "#60b8f0" : "#e06040";
-                    return <span key={i} title={`${h.date}: blueIdx=${h.blueIndex} ${h.waterMass}`} style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:dotColor,margin:"0 1px",verticalAlign:"middle"}} />;
-                  });
-
+                  const t = data.satData.turbidity;
+                  const age = data.satData.agedays;
+                  const label = t > 60 ? "Turbid" : t > 30 ? "Moderate" : t > 10 ? "Clear" : "Very Clear";
+                  const tColor = t > 60 ? "#e03030" : t > 30 ? "#f07040" : t > 10 ? "#f0c040" : "#00e5a0";
+                  const srcLabel = data.satData.turbiditySource === "bands721" ? "SWIR" : "TC";
                   return (
                     <span>
-                      <span style={{color: wmColor, fontWeight:600}}>{wmLabel}</span>
-                      {trendLabel && <span style={{color:trendColor,fontSize:"0.75rem"}}>{trendLabel}</span>}
+                      <span style={{color: tColor}}>{label} ({t})</span>
                       {" "}
                       <span style={{
                         display:"inline-block", width:10, height:10,
                         borderRadius:"50%", verticalAlign:"middle",
-                        background:`rgb(${sat.r},${sat.g},${sat.b})`,
+                        background:`rgb(${data.satData.r},${data.satData.g},${data.satData.b})`,
                         border:"1px solid #334"
                       }} />
-                      <br/>
-                      <span style={{color:"#3a5a7a",fontSize:"0.65rem"}}>
-                        {histDots} {age}d ago{t != null ? ` · turbidity ${t}` : ""}
-                      </span>
+                      <span style={{color:"#4a7a8a",fontSize:"0.65rem"}}> {age}d ago · {srcLabel}</span>
                     </span>
                   );
                 })(),
-                key: "Water Mass",
+                key: "Sat Turbidity",
+              }] : []),
+              // Webcam turbidity row (live camera pixel analysis)
+              ...(data.webcamData ? [{
+                icon: "📷",
+                val: (() => {
+                  const t = data.webcamData.turbidity;
+                  const label = t > 60 ? "Turbid" : t > 30 ? "Moderate" : t > 10 ? "Clear" : "Very Clear";
+                  const tColor = t > 60 ? "#e03030" : t > 30 ? "#f07040" : t > 10 ? "#f0c040" : "#00e5a0";
+                  const surf = data.webcamData.surfaceState;
+                  const surfIcon = surf === "rough" ? "🌊" : surf === "choppy" ? "〰️" : "🪞";
+                  return (
+                    <span>
+                      <span style={{color: tColor}}>{label} ({t})</span>
+                      {" "}{surfIcon}
+                      <span style={{
+                        display:"inline-block", width:10, height:10,
+                        borderRadius:"50%", verticalAlign:"middle",
+                        background:`rgb(${data.webcamData.r},${data.webcamData.g},${data.webcamData.b})`,
+                        border:"1px solid #334", marginLeft:4
+                      }} />
+                      <span style={{color:"#4a7a8a",fontSize:"0.65rem"}}> {data.webcamData.source === "supabase" ? "☀️ morning read" : "🔴 live"} · {data.webcamData.camName} · {data.webcamData.solarLabel ?? ""}</span>
+                    </span>
+                  );
+                })(),
+                key: "Webcam",
               }] : []),
               { icon: "🌀", val: (() => {
                   if (currentData?.valid) return `${currentData.speed.toFixed(1)}kt ${currentData.dirLabel} (RTOFS)`;
@@ -1767,19 +2320,42 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
             <FactorBar label="NW" value={data.factors.nw} isDelta={true} />
             <FactorBar label="Current" value={data.factors.current} isDelta={true} />
             <FactorBar label="SST" value={data.factors.sst} isDelta={true} />
+            <FactorBar label="Tide" value={data.factors.tide} isDelta={true} />
             <FactorBar label="Recovery" value={data.factors.recovery ?? 0} isDelta={true} />
             {/* CHANGE 4: Satellite factor bar */}
             {data.factors.satellite != null && data.factors.satellite !== 0 && (
               <FactorBar label="Satellite" value={data.factors.satellite} isDelta={true} />
             )}
-            {data.factors.blueWater != null && data.factors.blueWater !== 0 && (
-              <FactorBar label="Blue Water" value={data.factors.blueWater} isDelta={true} />
+            {data.factors.webcam != null && data.factors.webcam !== 0 && (
+              <FactorBar label="Webcam" value={data.factors.webcam} isDelta={true} />
+            )}
+            {data.factors.riverGauge != null && data.factors.riverGauge !== 0 && (
+              <FactorBar label="River gauge" value={data.factors.riverGauge} isDelta={true} />
             )}
           </div>
 
           <div className="spot-note">{spot.note}</div>
 
-          {spot.river && data.cond.rain_48h > 10 && (
+          {/* Live river turbidity callout from TRC gauges */}
+          {spot.trc_sites && data.cond.riverFNU != null && data.cond.riverFNU > 0 && (() => {
+            const fnu = data.cond.riverFNU;
+            const trend = data.cond.riverTrendFactor > 1.1 ? " ↑ rising" : "";
+            const level = fnu < 5 ? { label: "clear", color: "#00e5a0" }
+                        : fnu < 30 ? { label: "slightly elevated", color: "#f0c040" }
+                        : fnu < 100 ? { label: "murky", color: "#f07040" }
+                        : { label: "very high — flood turbidity", color: "#e05030" };
+            return (
+              <div style={{ fontSize: "0.75rem", padding: "0.3rem 0.5rem", marginTop: "0.3rem",
+                            background: "rgba(0,0,0,0.2)", borderRadius: "6px", color: level.color }}>
+                💧 River gauge: <strong>{fnu.toFixed(1)} FNU</strong> — {level.label}{trend}
+                <span style={{ color: "#3a6070", marginLeft: "0.4rem" }}>
+                  (TRC · {TRC_RIVER_SITES[spot.trc_sites[0]] ?? "gauge"})
+                </span>
+              </div>
+            );
+          })()}
+
+          {spot.river && data.cond.rain_48h > 10 && !data.cond.riverFNU && (
             <div className="warning">⚠️ Recent rain — expect river runoff and reduced viz at this spot</div>
           )}
 
@@ -1890,7 +2466,7 @@ function BestDayPanel({ spotDataMap }) {
 
 // ── Advice panel ──────────────────────────────────────────────────────────────
 
-function AdvicePanel({ spotDataMap }) {
+function AdvicePanel({ spotDataMap, spots }) {
   const advice = useMemo(() => {
     const entries = Object.entries(spotDataMap);
     if (entries.length === 0) return [];
@@ -1898,7 +2474,7 @@ function AdvicePanel({ spotDataMap }) {
     const firstData = entries[0]?.[1];
     if (!firstData?.cond) return [];
 
-    const scored = SPOTS.map(spot => {
+    const scored = spots.map(spot => {
       const d = spotDataMap[spot.name];
       return { spot, score: d?.score ?? 0 };
     }).sort((a, b) => b.score - a.score);
@@ -1944,7 +2520,7 @@ function Legend() {
 
 // ── Satellite map ─────────────────────────────────────────────────────────────
 
-function SpotMap({ spotScores, currentData, currentStatus }) {
+function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, mapZoom }) {
   const mapRef         = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef     = useRef([]);
@@ -1979,7 +2555,7 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
           try {
             const c = document.createElement("canvas");
             c.width = 32; c.height = 32;
-            const ctx = c.getContext("2d", { willReadFrequently: true });
+            const ctx = c.getContext("2d");
             ctx.drawImage(img, 0, 0, 32, 32);
             const px = ctx.getImageData(0, 0, 32, 32).data;
             const uniq = new Set();
@@ -2008,7 +2584,7 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
     markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
 
-    SPOTS.forEach(spot => {
+    spots.forEach(spot => {
       const score   = scoresArg[spot.name] ?? null;
       const color   = score != null ? scoreToColor(score) : "#607d8b";
       const label   = score != null ? scoreToLabel(score) : "Loading…";
@@ -2056,7 +2632,7 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
     const L = window.L;
 
     const map = L.map(mapRef.current, {
-      center: [-39.2, 174.1], zoom: 9,
+      center: mapCenter ?? [-39.2, 174.1], zoom: mapZoom ?? 9,
       zoomControl: true, attributionControl: true,
     });
     mapInstanceRef.current = map;
@@ -2100,7 +2676,16 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
       script.onload = load;
       document.head.appendChild(script);
     }
-  }, []);
+    // Cleanup: destroy map instance when mapCenter changes (region switch)
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        markersRef.current = [];
+        layersRef.current = {};
+      }
+    };
+  }, [mapCenter]);
 
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
@@ -2189,7 +2774,9 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
               <span style={{color:"#3a6a7a",fontSize:"0.6rem"}}>RTOFS HYCOM {currentData.ageHrs}h ago</span>
             </span>
           )}
-
+          {currentStatus === "error" && (
+            <span style={{color:"#e06040",fontSize:"0.7rem"}}>🌊 Current unavailable</span>
+          )}
         </span>
         <span className="spot-map-hint">Click a marker for details</span>
       </div>
@@ -2202,8 +2789,7 @@ function SpotMap({ spotScores, currentData, currentStatus }) {
 // DATA SOURCES & VALIDATION PAGE
 // ══════════════════════════════════════════════════════════════════════════════
 
-function DataSourcesPage() {
-  const spots = SPOTS;
+function DataSourcesPage({ W, spots }) {
 
   const dataSources = [
     {
@@ -2386,8 +2972,7 @@ function DataSourcesPage() {
                 <th title="River runoff impact (0=none, 1=heavy)">River</th>
                 <th title="Papa rock sediment risk (0=none, 1=heavy papa)">Papa</th>
                 <th title="Swell exposure penalty (0=protected, 1=fully exposed)">Swell</th>
-                <th title="Offshore wind push benefit — fires when wind blows in spot's offshore_dir (0=none, 1=strong)">Push</th>
-                <th title="Offshore wind direction — bearing that points away from coast (degrees)">Off°</th>
+                <th title="NW wind blue-water push benefit (0=none, 1=strong)">NW</th>
                 <th title="Tide sensitivity (0=unaffected, 1=strongly tide-dependent)">Tide</th>
                 <th title="Southerly bight exposure (0=none, 1=fully exposed to bight)">Bight</th>
               </tr>
@@ -2404,7 +2989,6 @@ function DataSourcesPage() {
                     <td style={{color: paramColor(s.papa_risk)}}>{s.papa_risk.toFixed(2)}</td>
                     <td style={{color: paramColor(s.swell_exposure)}}>{s.swell_exposure.toFixed(2)}</td>
                     <td style={{color: invColor(s.nw_push)}}>{s.nw_push.toFixed(2)}</td>
-                    <td style={{color: "#a0c8e0"}}>{s.offshore_dir ?? 315}°</td>
                     <td style={{color: paramColor(s.tide_sensitive)}}>{s.tide_sensitive.toFixed(2)}</td>
                     <td style={{color: paramColor(s.southerly_bight)}}>{s.southerly_bight.toFixed(2)}</td>
                   </tr>
@@ -2426,8 +3010,8 @@ function DataSourcesPage() {
             { label: "Swell Weight", val: W.w_swell, desc: "Primary factor — wave height + period" },
             { label: "Wind Weight", val: W.w_wind, desc: "Wind speed and direction effect" },
             { label: "Rain Weight", val: W.w_rain, desc: "14-day rain history with papa decay" },
-            { label: "Offshore Push Mult", val: W.nw_push_mult, desc: "Blue-water suck bonus when wind blows offshore (per spot's offshore_dir)" },
-            { label: "Offshore Rain Mult", val: W.nw_rain_mult, desc: "Rain penalty during offshore wind — reduces push benefit" },
+            { label: "NW Push Mult", val: W.nw_push_mult, desc: "Blue-water push bonus when NW wind active" },
+            { label: "NW Rain Mult", val: W.nw_rain_mult, desc: "Rain penalty during NW — reduces push benefit" },
             { label: "Current North", val: W.cur_north, desc: "Northerly current bonus (cleaner water)" },
             { label: "Current South", val: W.cur_south, desc: "Southerly current penalty (turbid bight water)" },
             { label: "Bight Mult", val: W.bight_mult, desc: "South Taranaki Bight sediment exposure" },
@@ -2574,24 +3158,223 @@ function DataSourcesPage() {
 // Share helpers
 // ══════════════════════════════════════════════════════════════════════════════
 
-function getShareText(spotDataMap) {
+function getShareText(spotDataMap, regionLabel) {
   const entries = Object.entries(spotDataMap).filter(([,d]) => d?.score != null);
-  if (!entries.length) return "Check out the Taranaki Viz Forecast — spearfishing visibility predictions for the Taranaki coast! 🐟🤿";
+  if (!entries.length) return `Check out the ${regionLabel} Viz Forecast — spearfishing visibility predictions! 🐟🤿`;
   const best = entries.sort((a, b) => b[1].score - a[1].score)[0];
   const bestName = best[0].split("—")[0].trim();
-  return `Taranaki Viz Forecast 🐟\nBest spot right now: ${bestName} — ${best[1].score}/100 (${scoreToLabel(best[1].score)})\nCheck conditions & log your dives:`;
+  return `${regionLabel} Viz Forecast 🐟\nBest spot right now: ${bestName} — ${best[1].score}/100 (${scoreToLabel(best[1].score)})\nCheck conditions & log your dives:`;
 }
 
-function ShareButtons({ spotDataMap, compact }) {
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SEASONAL CHART — pipeline-calibrated, region-aware
+// ══════════════════════════════════════════════════════════════════════════════
+function SeasonalPage({ region }) {
+  const REGION = REGIONS[region];
+  const currentMonth = new Date().getMonth(); // 0-indexed
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  // Regional overview data (clear% by month)
+  const overview = REGION.seasonalChart;
+  const spotSeasonal = REGION.spotSeasonal;
+  const spots = Object.keys(spotSeasonal);
+
+  // Colour helpers
+  function clearColor(pct) {
+    if (pct >= 75) return "#00e5a0";
+    if (pct >= 60) return "#7dd64f";
+    if (pct >= 50) return "#f0a030";
+    return "#f07040";
+  }
+  function deltaColor(d) {
+    if (d >= 10) return "#00e5a0";
+    if (d >= 4)  return "#7dd64f";
+    if (d >= -3) return "#8899aa";
+    if (d >= -10) return "#f0a030";
+    return "#f07040";
+  }
+  function deltaLabel(d) {
+    if (d >= 10) return "Best";
+    if (d >= 4)  return "Good";
+    if (d >= -3) return "Avg";
+    if (d >= -10) return "Poor";
+    return "Worst";
+  }
+
+  return (
+    <div style={{ padding: "0 0 3rem" }}>
+
+      {/* ── Regional overview ─────────────────────────────────────── */}
+      <div style={{
+        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)",
+        borderRadius: 14, padding: "1.4rem 1.6rem 1.2rem", marginBottom: "2rem",
+      }}>
+        <div style={{ fontSize: "1rem", fontWeight: 700, color: "#c8e0ea", marginBottom: 4 }}>
+          📅 {REGION.label} — Regional Overview
+        </div>
+        <div style={{ fontSize: "0.72rem", color: "#4a7a8a", marginBottom: "1.2rem" }}>
+          {REGION.seasonalNote}
+        </div>
+
+        {/* Overview bars */}
+        <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 80 }}>
+          {overview.map((d, i) => {
+            const isCurrent = i === currentMonth;
+            const cc = clearColor(d.clear);
+            return (
+              <div key={d.month} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                <div style={{ fontSize: "0.6rem", color: cc, fontWeight: isCurrent ? 700 : 400 }}>{d.clear}%</div>
+                <div style={{
+                  width: "100%", height: `${d.clear * 0.55}px`,
+                  background: `linear-gradient(to top, ${cc}cc, ${cc}33)`,
+                  borderTop: `2px solid ${cc}`,
+                  borderRadius: "3px 3px 0 0",
+                  outline: isCurrent ? `2px solid ${cc}` : "none",
+                  outlineOffset: 1,
+                }} />
+                <div style={{ fontSize: "0.58rem", color: isCurrent ? "#c8e0ea" : "#4a7a8a", fontWeight: isCurrent ? 700 : 400 }}>
+                  {d.month}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Legend */}
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginTop: "0.8rem" }}>
+          {[["#00e5a0","75%+ clear"],["#7dd64f","60–75%"],["#f0a030","50–60%"],["#f07040","<50%"]].map(([c,l]) => (
+            <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.68rem", color: "#6a8a9a" }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: c, display: "inline-block" }} />{l}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Per-spot seasonal patterns ────────────────────────────── */}
+      <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#c8e0ea", marginBottom: "0.6rem", letterSpacing: "0.04em" }}>
+        Per-Spot Monthly Patterns
+      </div>
+      <div style={{ fontSize: "0.72rem", color: "#4a7a8a", marginBottom: "1.4rem" }}>
+        Delta vs annual average — how much better or worse each spot is in each month.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "1.2rem" }}>
+        {spots.map(spotName => {
+          const deltas = spotSeasonal[spotName]; // { 1:val, 2:val, ... }
+          const vals = Object.values(deltas);
+          const maxAbs = Math.max(...vals.map(Math.abs), 1);
+          // Find best and worst months
+          const maxVal = Math.max(...vals);
+          const minVal = Math.min(...vals);
+
+          return (
+            <div key={spotName} style={{
+              background: "rgba(255,255,255,0.025)",
+              border: "1px solid rgba(255,255,255,0.06)",
+              borderRadius: 12, padding: "1rem 1.2rem 0.9rem",
+            }}>
+              <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#c8e0ea", marginBottom: "0.8rem" }}>
+                {spotName}
+              </div>
+
+              {/* Delta bars — centred on zero */}
+              <div style={{ display: "flex", gap: 3, alignItems: "center", height: 64 }}>
+                {MONTHS.map((month, i) => {
+                  const d = deltas[i + 1] ?? 0;
+                  const isCurrent = i === currentMonth;
+                  const barH = Math.round((Math.abs(d) / maxAbs) * 28);
+                  const isPos = d >= 0;
+                  const dc = deltaColor(d);
+                  return (
+                    <div key={month} title={`${month}: ${d > 0 ? "+" : ""}${d} (${deltaLabel(d)})`}
+                      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", height: 64, justifyContent: "center", position: "relative" }}>
+                      {/* Positive bar (above centre) */}
+                      <div style={{ height: 28, display: "flex", alignItems: "flex-end", width: "100%" }}>
+                        {isPos && (
+                          <div style={{
+                            width: "100%", height: barH,
+                            background: dc,
+                            borderRadius: "2px 2px 0 0",
+                            opacity: isCurrent ? 1 : 0.75,
+                            outline: isCurrent ? `1px solid ${dc}` : "none",
+                            outlineOffset: 1,
+                          }} />
+                        )}
+                      </div>
+                      {/* Centre line */}
+                      <div style={{ width: "100%", height: 1, background: "rgba(255,255,255,0.1)" }} />
+                      {/* Negative bar (below centre) */}
+                      <div style={{ height: 28, display: "flex", alignItems: "flex-start", width: "100%" }}>
+                        {!isPos && (
+                          <div style={{
+                            width: "100%", height: barH,
+                            background: dc,
+                            borderRadius: "0 0 2px 2px",
+                            opacity: isCurrent ? 1 : 0.75,
+                            outline: isCurrent ? `1px solid ${dc}` : "none",
+                            outlineOffset: 1,
+                          }} />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Month labels */}
+              <div style={{ display: "flex", gap: 3, marginTop: 3 }}>
+                {MONTHS.map((month, i) => (
+                  <div key={month} style={{
+                    flex: 1, textAlign: "center",
+                    fontSize: "0.55rem",
+                    color: i === currentMonth ? "#c8e0ea" : "#3a5a6a",
+                    fontWeight: i === currentMonth ? 700 : 400,
+                  }}>{month}</div>
+                ))}
+              </div>
+
+              {/* Best / worst callout */}
+              <div style={{ display: "flex", gap: "1.2rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
+                {[
+                  { label: "Best", val: maxVal, months: MONTHS.filter((_,i) => deltas[i+1] === maxVal) },
+                  { label: "Worst", val: minVal, months: MONTHS.filter((_,i) => deltas[i+1] === minVal) },
+                ].map(({ label, val, months }) => (
+                  <span key={label} style={{ fontSize: "0.68rem", color: "#4a7a8a" }}>
+                    <span style={{ color: deltaColor(val), fontWeight: 600 }}>{label}:</span>{" "}
+                    {months.join(", ")} ({val > 0 ? "+" : ""}{val})
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Delta legend ─────────────────────────────────────────── */}
+      <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap", marginTop: "1.4rem" }}>
+        {[["#00e5a0","+10 or more — significantly above avg"],["#7dd64f","+4 to +9 — above avg"],
+          ["#8899aa","-3 to +3 — average"],["#f0a030","-4 to -9 — below avg"],["#f07040","-10 or worse — significantly below avg"]]
+          .map(([c,l]) => (
+            <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.66rem", color: "#6a8a9a" }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: c, display: "inline-block" }} />{l}
+            </span>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+function ShareButtons({ spotDataMap, compact, regionLabel }) {
   const [copied, setCopied] = useState(false);
   const shareUrl = typeof window !== "undefined" ? window.location.href : "";
-  const text = getShareText(spotDataMap);
+  const text = getShareText(spotDataMap, regionLabel);
   const handleCopy = async () => {
     try { await navigator.clipboard.writeText(text + "\n" + shareUrl); setCopied(true); setTimeout(() => setCopied(false), 2200); } catch {}
   };
   const handleWhatsApp = () => { window.open(`https://wa.me/?text=${encodeURIComponent(text + "\n" + shareUrl)}`, "_blank"); };
   const handleSms = () => { window.open(`sms:?body=${encodeURIComponent(text + "\n" + shareUrl)}`, "_blank"); };
-  const handleNativeShare = async () => { if (navigator.share) { try { await navigator.share({ title: "Taranaki Viz Forecast", text, url: shareUrl }); } catch {} } };
+  const handleNativeShare = async () => { if (navigator.share) { try { await navigator.share({ title: `${regionLabel} Viz Forecast`, text, url: shareUrl }); } catch {} } };
   const hasNativeShare = typeof navigator !== "undefined" && !!navigator.share;
 
   if (compact) {
@@ -2633,7 +3416,7 @@ function ShareButtons({ spotDataMap, compact }) {
 }
 
 // ── Welcome banner ─────────────────────────────────────────────────────────────
-function WelcomeBanner({ onDismiss, onSetName, diverName }) {
+function WelcomeBanner({ onDismiss, onSetName, diverName, regionLabel }) {
   const [name, setName] = useState(diverName || "");
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
@@ -2643,7 +3426,7 @@ function WelcomeBanner({ onDismiss, onSetName, diverName }) {
       <div className="welcome-glow" />
       <div className="welcome-content">
         <div className="welcome-icon">🤿</div>
-        <h2 className="welcome-title">Welcome to the Taranaki Viz Forecast</h2>
+        <h2 className="welcome-title">Welcome to the {regionLabel} Viz Forecast</h2>
         <p className="welcome-desc">
           Real-time spearfishing visibility predictions for 6 spots around the Taranaki coast.
           Scores combine swell, wind, rain history, ocean currents, SST, and satellite turbidity data.
@@ -2694,12 +3477,6 @@ function CommunityLogPanel({ logs, logStatus, spotName }) {
           <span className="cp-date">{e.date}</span>
           <span className="cp-vis" style={{color: scoreToColor(Math.round((e.observed_vis ?? e.observedVis ?? 0) * 10))}}>{e.observed_vis ?? e.observedVis}m</span>
           <span className="cp-tide">{e.tide} tide</span>
-          {e.current_strength && e.current_strength !== "none" && (
-            <span className="cp-current" title="Observed current">
-              {e.current_strength === "light" ? "〰️" : e.current_strength === "moderate" ? "🌊" : "💨"}
-              {" "}{e.current_strength}{e.current_direction ? ` ${e.current_direction}` : ""}
-            </span>
-          )}
           <span className="cp-model">model: {e.model_score ?? e.modelScore}</span>
           {e.notes && <span className="cp-note" title={e.notes}>📝</span>}
         </div>
@@ -2728,24 +3505,24 @@ function CommunityStats({ logs, logStatus }) {
 }
 
 // ── Growth nudge ──────────────────────────────────────────────────────────────
-function GrowthNudge({ logs, spotDataMap }) {
+function GrowthNudge({ logs, spotDataMap, regionLabel, spots }) {
   const totalDivers = new Set(logs.map(l => l.diver_name)).size;
   const totalLogs = logs.length;
-  const spotsWithData = SPOTS.filter(s => logs.filter(l => l.spot === s.name).length >= 2).length;
+  const spotsWithData = spots.filter(s => logs.filter(l => l.spot === s.name).length >= 2).length;
   return (
     <div className="growth-nudge">
       <div className="gn-header"><span className="gn-title">📈 Community Data Health</span></div>
       <div className="gn-stats">
         <div className="gn-stat"><div className="gn-stat-val">{totalDivers}</div><div className="gn-stat-label">Divers</div></div>
         <div className="gn-stat"><div className="gn-stat-val">{totalLogs}</div><div className="gn-stat-label">Observations</div></div>
-        <div className="gn-stat"><div className="gn-stat-val">{spotsWithData}/{SPOTS.length}</div><div className="gn-stat-label">Spots Calibrated</div></div>
+        <div className="gn-stat"><div className="gn-stat-val">{spotsWithData}/{spots.length}</div><div className="gn-stat-label">Spots Calibrated</div></div>
       </div>
       <div className="gn-meter">
         <div className="gn-meter-label">Model calibration: {totalLogs < 10 ? "Early days" : totalLogs < 30 ? "Getting better" : totalLogs < 100 ? "Good data" : "Strong calibration"}</div>
         <div className="gn-meter-bar"><div className="gn-meter-fill" style={{ width: `${Math.min(100, (totalLogs / 100) * 100)}%` }} /></div>
         <div className="gn-meter-hint">{totalLogs < 30 ? `${30 - totalLogs} more observations for solid calibration` : totalLogs < 100 ? `${100 - totalLogs} more for high-confidence predictions` : "Great coverage — well-calibrated"}</div>
       </div>
-      <ShareButtons spotDataMap={spotDataMap} compact={false} />
+      <ShareButtons spotDataMap={spotDataMap} regionLabel={regionLabel} compact={false} />
     </div>
   );
 }
@@ -2755,6 +3532,24 @@ function GrowthNudge({ logs, spotDataMap }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 export default function App() {
+  const [region, setRegion] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.get("region") === "kapiti" ? "kapiti" : "taranaki";
+    } catch(e) { return "taranaki"; }
+  });
+  const REGION = REGIONS[region];
+  const SPOTS = REGION.spots;
+  const W = REGION.W;
+
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("region", region);
+      window.history.replaceState({}, "", url);
+    } catch(e) {}
+  }, [region]);
+
   const now = new Date().toLocaleDateString("en-NZ", {
     weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Pacific/Auckland"
   });
@@ -2785,7 +3580,11 @@ export default function App() {
     currentStatus,
     satData,
     satStatus,
-  } = useAllSpotsData(logEntries);
+    webcamData,
+    webcamStatus,
+    riverData,
+    riverStatus,
+  } = useAllSpotsData(logEntries, SPOTS, W, region);
 
   const spotScores = useMemo(() => {
     const s = {};
@@ -2902,6 +3701,31 @@ export default function App() {
         .wf-speed { font-size: 0.62rem; font-family: 'Space Mono', monospace; font-weight: 700; }
         .wf-dir { font-size: 0.48rem; color: #3a6a7a; font-family: 'Space Mono', monospace; }
         .wf-nw-badge { font-size: 0.55rem; position: absolute; top: -2px; right: -2px; }
+        
+        /* ── Region Switcher ── */
+        .region-switcher { display: flex; justify-content: center; gap: 0; margin: 0 auto 1.2rem; border: 1px solid rgba(0,229,160,0.2); border-radius: 10px; overflow: hidden; max-width: 340px; }
+        .region-btn { flex: 1; padding: 0.55rem 1rem; background: transparent; border: none; color: #4a8a9a; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.05em; cursor: pointer; transition: all 0.2s; }
+        .region-btn:hover { background: rgba(0,229,160,0.08); color: #00e5a0; }
+        .region-btn.active { background: rgba(0,229,160,0.15); color: #00e5a0; border-bottom: 2px solid #00e5a0; }
+        .region-btn + .region-btn { border-left: 1px solid rgba(0,229,160,0.15); }
+        /* ── Seasonal chart (shared) ── */
+        .seasonal-chart-wrap { background: rgba(0,20,40,0.7); border: 1px solid rgba(0,229,160,0.12); border-radius: 12px; padding: 1.2rem 1.4rem 1rem; margin: 1.5rem 0; }
+        .seasonal-chart-title { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; color: #00e5a0; margin-bottom: 0.2rem; }
+        .seasonal-chart-sub { display: block; font-size: 0.6rem; color: #4a7a8a; font-weight: 400; letter-spacing: 0.04em; margin-top: 0.1rem; margin-bottom: 0.8rem; }
+        .seasonal-chart-body { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; height: 100px; align-items: end; }
+        .seasonal-col { display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: default; }
+        .seasonal-col-current .seasonal-bar-wrap { outline: 1px solid rgba(0,229,160,0.4); border-radius: 3px; }
+        .seasonal-bar-wrap { width: 100%; height: 70px; display: flex; flex-direction: column; justify-content: flex-end; position: relative; border-radius: 3px; }
+        .seasonal-bar-clear { width: 100%; border-radius: 3px 3px 0 0; min-height: 2px; }
+        .seasonal-blue-dot { position: absolute; left: 50%; transform: translateX(-50%); width: 6px; height: 6px; border-radius: 50%; background: #4fc3f7; border: 1px solid rgba(79,195,247,0.8); }
+        .seasonal-pct { font-size: 0.5rem; color: #5a8a9a; text-align: center; margin-top: 2px; }
+        .seasonal-month { font-size: 0.55rem; color: #3a5a6a; text-align: center; }
+        .seasonal-month-now { color: #00e5a0 !important; font-weight: 700; }
+        .seasonal-chart-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.7rem; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.05); }
+        .seasonal-legend-item { display: flex; align-items: center; gap: 4px; font-size: 0.58rem; color: #4a6a7a; }
+        .seasonal-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+        .seasonal-blue-legend { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4fc3f7; border: 1px solid rgba(79,195,247,0.8); }
+
         .wf-legend { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; font-size: 0.52rem; font-family: 'Space Mono', monospace; }
 
         .expanded-table { margin-top: 1rem; overflow-x: auto; }
@@ -3038,12 +3862,6 @@ export default function App() {
         .tide-buttons { display: flex; gap: 0.5rem; }
         .tide-btn { flex: 1; padding: 0.5rem; background: #040d14; border: 1px solid #1a3a4a; border-radius: 7px; color: #4a7a8a; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.85rem; }
         .tide-btn.active { background: rgba(0,180,140,0.12); border-color: #2a8a7a; color: #00e5a0; font-weight: 700; }
-        .compass-picker { display: grid; grid-template-areas: ". N ." "NW . NE" "W . E" "SW . SE" ". S ."; grid-template-columns: 1fr 1fr 1fr; gap: 0.3rem; width: 160px; }
-        .compass-btn { padding: 0.4rem 0; background: #040d14; border: 1px solid #1a3a4a; border-radius: 6px; color: #4a7a8a; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.78rem; font-weight: 600; text-align: center; }
-        .compass-btn.active { background: rgba(0,150,255,0.12); border-color: #2a6aaa; color: #60b8f0; }
-        .compass-N  { grid-area: N;  } .compass-NE { grid-area: NE; } .compass-E  { grid-area: E;  }
-        .compass-SE { grid-area: SE; } .compass-S  { grid-area: S;  } .compass-SW { grid-area: SW; }
-        .compass-W  { grid-area: W;  } .compass-NW { grid-area: NW; }
         .modal-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; }
         .modal-score { font-size: 0.7rem; color: #3a6070; font-family: 'Space Mono', monospace; }
         .modal-save { padding: 0.6rem 1.4rem; background: #1a4a3a; border: 1px solid #2a8a6a; border-radius: 8px; color: #00e5a0; font-weight: 700; cursor: pointer; font-family: 'Syne', sans-serif; font-size: 0.9rem; }
@@ -3101,7 +3919,6 @@ export default function App() {
         .cp-date { color: #3a5a7a; font-family: 'Space Mono', monospace; font-size: 0.62rem; }
         .cp-vis { font-weight: 700; font-family: 'Space Mono', monospace; }
         .cp-tide { color: #3a6a7a; font-size: 0.65rem; }
-        .cp-current { color: #4a8aaa; font-size: 0.65rem; white-space: nowrap; }
         .cp-model { color: #2a4a6a; font-size: 0.62rem; font-family: 'Space Mono', monospace; }
         .cp-note { cursor: pointer; }
         .cp-more { display: block; width: 100%; text-align: center; padding: 0.4rem; margin-top: 0.4rem; background: none; border: 1px solid rgba(0,100,160,0.15); border-radius: 5px; color: #3a6a8a; font-size: 0.65rem; cursor: pointer; font-family: 'Syne',sans-serif; }
@@ -3141,25 +3958,36 @@ export default function App() {
             <div className="wave-line" />
             <div className="wave-line" />
           </div>
-          <h1>🐟 Taranaki Viz Forecast</h1>
+          <h1>{REGION.emoji} {REGION.label} Viz Forecast</h1>
           <p className="subtitle">Spearfishing Visibility Predictions</p>
           <p className="date">{now}</p>
-          <ShareButtons spotDataMap={spotDataMap} compact={true} />
+          <ShareButtons spotDataMap={spotDataMap} regionLabel={REGION.label} compact={true} />
         </header>
 
         <div className="page-nav">
-          <button className={`page-nav-btn ${activePage === "forecast" ? "active" : ""}`}
-            onClick={() => setActivePage("forecast")}>🤿 Forecast</button>
+          <div className="region-switcher" style={{marginBottom:"0.8rem"}}>
+            {Object.values(REGIONS).map(r => (
+              <button key={r.id} className={`region-btn${region === r.id ? " active" : ""}`}
+                onClick={() => { setRegion(r.id); setActivePage("forecast"); }}>
+                {r.emoji} {r.label}
+              </button>
+            ))}
+          </div>
+          <button className={`page-nav-btn ${activePage === "seasonal" ? "active" : ""}`}
+            onClick={() => setActivePage(activePage === "seasonal" ? "forecast" : "seasonal")}>📅 Seasonal</button>
           <button className={`page-nav-btn ${activePage === "data" ? "active" : ""}`}
-            onClick={() => setActivePage("data")}>📡 Data Sources</button>
+            onClick={() => setActivePage(activePage === "data" ? "forecast" : "data")}>📡 Data Sources</button>
         </div>
 
         {activePage === "data" ? (
-          <DataSourcesPage />
+          <DataSourcesPage W={W} spots={SPOTS} />
+        ) : activePage === "seasonal" ? (
+          <SeasonalPage region={region} />
         ) : (
           <>
             {showWelcome && (
               <WelcomeBanner
+                regionLabel={REGION.label}
                 onDismiss={handleWelcomeDismiss}
                 onSetName={handleSetName}
                 diverName={diverName}
@@ -3178,16 +4006,38 @@ export default function App() {
               <span className={`data-status-pill ${satStatus === "ok" ? "ok" : satStatus === "error" ? "warn" : "wait"}`}>
                 {satStatus === "ok" ? `✓ Satellite (${Object.keys(satData).length} spots)` : satStatus === "error" ? "⚠ Satellite" : "⏳ Satellite…"}
               </span>
+              {region === "taranaki" && (
+                <span className={`data-status-pill ${webcamStatus === "ok" ? "ok" : webcamStatus === "error" ? "warn" : webcamStatus === "no-data" || webcamStatus === "no-morning-data" ? "warn" : "wait"}`}>
+                  {webcamStatus === "ok"
+                    ? `📷 Webcam (${Object.values(webcamData).some(v => v.source === "supabase") ? "☀️ cached" : "🔴 live"} · ${Object.keys(webcamData).length} spots)`
+                    : webcamStatus === "no-morning-data" ? "📷 No morning read yet"
+                    : webcamStatus === "no-data" ? "📷 No cam data"
+                    : webcamStatus === "error" ? "⚠ Webcam"
+                    : "⏳ Webcam…"}
+                </span>
+              )}
+              {region === "taranaki" && (
+                <span className={`data-status-pill ${riverStatus === "ok" ? "ok" : riverStatus === "error" ? "warn" : riverStatus === "no-data" ? "warn" : "wait"}`}>
+                  {riverStatus === "ok"
+                    ? `💧 Rivers (${Object.keys(riverData).length} gauges live)`
+                    : riverStatus === "error" ? "⚠ Rivers (offline)"
+                    : riverStatus === "no-data" ? "💧 No river data"
+                    : "⏳ Rivers…"}
+                </span>
+              )}
             </div>
 
-            <AdvicePanel spotDataMap={spotDataMap} />
+            <AdvicePanel spotDataMap={spotDataMap} spots={SPOTS} />
             <BestDayPanel spotDataMap={spotDataMap} />
             <CommunityStats logs={allLogs} logStatus={logStatus} />
 
             <SpotMap
+              spots={SPOTS}
               spotScores={spotScores}
               currentData={currentData}
               currentStatus={currentStatus}
+              mapCenter={REGION.mapCenter}
+              mapZoom={REGION.mapZoom}
             />
 
             <div className="grid">
@@ -3210,7 +4060,7 @@ export default function App() {
             </div>
 
             <Legend />
-            <GrowthNudge logs={allLogs} spotDataMap={spotDataMap} />
+            <GrowthNudge logs={allLogs} spotDataMap={spotDataMap} regionLabel={REGION.label} spots={SPOTS} />
 
             <div className="info-panel">
               <strong>How it works:</strong> Scores combine swell height/period, wind speed/direction, 14-day rain history,
@@ -3219,8 +4069,27 @@ export default function App() {
               Log your dives to build per-spot bias correction over time.
             </div>
 
+            <div style={{
+              background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)",
+              borderRadius: 10, padding: "0.9rem 1.2rem",
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem",
+            }}>
+              <span style={{ fontSize: "0.8rem", color: "#6a8a9a" }}>
+                📅 <strong style={{ color: "#c8e0ea" }}>Seasonal patterns</strong> — monthly visibility trends for all spots
+              </span>
+              <button
+                onClick={() => setActivePage("seasonal")}
+                style={{
+                  background: "rgba(0,180,140,0.1)", border: "1px solid rgba(0,229,160,0.25)",
+                  borderRadius: 8, color: "#00e5a0", fontSize: "0.75rem", fontWeight: 600,
+                  padding: "0.4rem 0.9rem", cursor: "pointer", whiteSpace: "nowrap",
+                }}>
+                View →
+              </button>
+            </div>
+
             <footer>
-              Taranaki Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Supabase · Built for Taranaki divers 🐟
+              {REGION.footer} · Open-Meteo · NOAA RTOFS · NASA GIBS · Supabase · NZ Spearfishing Visibility 🐟
             </footer>
           </>
         )}
