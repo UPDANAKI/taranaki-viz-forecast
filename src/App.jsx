@@ -712,6 +712,8 @@ function latLonToTilePx(lat, lon, z) {
 function classifyPixel(r, g, b, a) {
   if (a < 10) return "transparent";
   const brightness = (r + g + b) / 3;
+  // Nearly black: shadow, bad data, or land edge — not valid water
+  if (brightness < 8) return "invalid";
   const maxCh = Math.max(r, g, b);
   const minCh = Math.min(r, g, b);
   const saturation = maxCh > 0 ? (maxCh - minCh) / maxCh : 0;
@@ -1365,30 +1367,18 @@ function applyBias(score, biasMult) {
   return Math.max(0, score - 30);
 }
 
-// ── RTOFS ocean current fetch ─────────────────────────────────────────────────
+// ── RTOFS ocean current fetch (via Netlify proxy — ERDDAP blocks browser CORS) ─
+// Deploy netlify/functions/erddap-current.js alongside trc-river.js
 
 async function fetchOceanCurrent() {
   const lat = -39.05;
   const lon = 173.87;
-  const base = "https://upwell.pfeg.noaa.gov/erddap/griddap/ncepRtofsG2DFore3hrlyProg.json";
-  const q = `?u_velocity[(0)][(1.0)][(${lat})][(${lon})],v_velocity[(0)][(1.0)][(${lat})][(${lon})]`;
-  const res = await fetch(base + q);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const url = `/.netlify/functions/erddap-current?lat=${lat}&lon=${lon}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`ERDDAP proxy HTTP ${res.status}`);
   const js = await res.json();
-  const rows = js.table.rows;
-  if (!rows || rows.length === 0) throw new Error("no data");
-  const [timeStr, , , , u, v] = rows[0];
-  if (u == null || v == null || isNaN(u) || isNaN(v)) throw new Error("NaN current");
-  const uKt = u * 1.944;
-  const vKt = v * 1.944;
-  const speed = Math.sqrt(uKt*uKt + vKt*vKt);
-  const dirRad = Math.atan2(u, v);
-  const dir = ((dirRad * 180 / Math.PI) + 360) % 360;
-  const pts = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
-  const dirLabel = pts[Math.round(dir / 22.5) % 16];
-  const modelTime = new Date(timeStr);
-  const ageHrs = Math.round((Date.now() - modelTime) / 3600000);
-  return { u: uKt, v: vKt, speed, dir, dirLabel, modelTime: timeStr, ageHrs, valid: true };
+  if (!js.ok) throw new Error(js.error ?? "proxy error");
+  return js; // { u, v, speed, dir, dirLabel, modelTime, ageHrs, valid }
 }
 
 // ── TRC River turbidity fetch (via Netlify proxy) ────────────────────────────
@@ -1667,7 +1657,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
               // atmospheric haze which mostly affect visible wavelengths.
               const { r, g, b } = b721;
               const total = r + g + b;
-              if (total > 10) {
+              if (total > 30) {  // >10 allows near-black garbage through; require meaningful signal
                 const swirFraction  = r / total;   // band 7 SWIR — sediment proxy
                 const nirFraction   = g / total;   // band 2 NIR
                 const redFraction   = b / total;   // band 1 red
