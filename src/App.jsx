@@ -32,6 +32,32 @@ async function sbFetch(path, options = {}) {
 async function fetchCommunityLogs() { return sbFetch("/dive_logs?order=created_at.desc&limit=500"); }
 async function insertLog(entry) { return sbFetch("/dive_logs", { method: "POST", body: JSON.stringify(entry), prefer: "return=representation" }); }
 
+// ── Usage analytics — anonymous session + spot view logging ──────────────────
+function getPlatform() {
+  const ua = navigator.userAgent;
+  if (/Mobi|Android/i.test(ua)) return "mobile";
+  if (/iPad|Tablet/i.test(ua)) return "tablet";
+  return "desktop";
+}
+
+async function logUsageEvent(event, region, spotName = null) {
+  try {
+    await sbFetch("/usage_events", {
+      method: "POST",
+      body: JSON.stringify({
+        event,
+        region,
+        spot_name: spotName,
+        platform: getPlatform(),
+        referrer: document.referrer || null,
+      }),
+      prefer: "return=minimal",
+    });
+  } catch(e) {
+    // Silent fail — analytics should never break the app
+  }
+}
+
 // ── Webcam morning readings — Supabase persistence ────────────────────────────
 // Stores one morning (peak solar) webcam turbidity reading per spot per day.
 // Table: webcam_readings  columns: date, spot_name, turbidity, surface_state,
@@ -149,39 +175,71 @@ const REGIONS = {
 
     // Scoring weights — Taranaki-calibrated
     W: {
-      w_swell: 0.45, w_wind: 0.25, w_rain: 0.30,
+      w_swell: 0.55, w_wind: 0.20, w_rain: 0.25,  // regression: swell 4x more important than rain
       push_mult: 14.0,   // replaces nw_push_mult — per-spot wind dir scoring
       rain_pen_mult: 20.0,
       cur_north: 14.0, cur_south: 18.0, bight_mult: 22.0,
-      sst_warm: 8.0, sst_cold: -16.0,
+      sst_warm: 12.0, sst_cold: -22.0,  // regression: sst_trend_7d importance > any rain window
       tide_mult: 1.0,
       shelter_mult: 0.10, river_mult: 0.15,
       hist_2_5: 0.60, hist_2_0: 0.75, hist_1_5: 0.88,
       seasonal_mult: 1.0,
-    },
 
-    // Seasonal bias per month — derived from pipeline (clear% relative to annual mean)
-    // Each spot has its own curve because Nga Motu is inverted vs the rest
+      // ── Per-spot type weight profiles (regression-derived) ───────────────
+      // Merged at score time: spot.spot_type picks the profile.
+      // Only keys that differ from the global values above need listing.
+      SPOT_TYPE_WEIGHTS: {
+      // Swell-dominated: open rock/reef, no significant river input.
+      // Regression: swell_h importance 0.094, rain 0.018, SST matters.
+      // Spots: motumahanga, metal_reef, fin_fuckers, opunake, kapiti spots
+      swell: {
+        w_swell: 0.60, w_wind: 0.18, w_rain: 0.22,
+        sst_warm: 14.0, sst_cold: -24.0,  // SST signal stronger at exposed spots
+        river_mult: 0.05,                  // minimal river influence
+      },
+      // River/harbour-dominated: poor flushing, high rain/river sensitivity.
+      // Regression: rain correlation 0.41 (gauge_rain), river_impact high.
+      // Spots: nga_motu, patea_inshore
+      river: {
+        w_swell: 0.35, w_wind: 0.15, w_rain: 0.50,
+        rain_pen_mult: 28.0,               // harder rain penalty
+        sst_warm: 6.0,  sst_cold: -10.0,  // SST less relevant in turbid harbour
+        river_mult: 0.25,                  // elevated river penalty
+      },
+      // Bight/sediment: southerly current drives suspended sediment, mid-range swell.
+      // Regression: patea_offshore R²=0.68 (lowest), bight_mult dominant.
+      // Spots: patea_offshore, patea_inshore (partial)
+      bight: {
+        w_swell: 0.45, w_wind: 0.20, w_rain: 0.35,
+        sst_warm: 8.0,  sst_cold: -18.0,
+        bight_mult: 28.0,                  // bight sediment signal amplified
+        cur_south: 22.0,                   // stronger southerly current penalty
+        river_mult: 0.20,
+      },
+      },  // end SPOT_TYPE_WEIGHTS
+    },  // end W
+
+    // Seasonal bias per month — Sentinel-2 calibrated (2017-2026, 2,712 observations)
+    // Derived from median NTU per spot per month. Lower NTU month = positive delta.
     // Applied as: score += seasonal[month] * W.seasonal_mult
-    // (null = use spot.seasonal override if defined)
-
-    // Seasonal data by spot name (pipeline-calibrated)
     spotSeasonal: {
-      // Real pipeline deltas: clear_pct[month] - annual_avg, from 668+ MODIS obs each
       "Motumahanga (Saddleback Is.)":
-        {1:+11,2:+7,3:+16,4:+4,5:+5,6:-21,7:-4,8:-2,9:-9,10:-3,11:-2,12:-4},
+        {1:-4,2:+2,3:+5,4:+5,5:+5,6:+5,7:+3,8:+4,9:-2,10:-1,11:-9,12:-11},
       "Nga Motu — Inshore (Port Taranaki)":
-        {1:-14,2:-10,3:-14,4:0,5:+4,6:+4,7:+2,8:+6,9:+8,10:+16,11:-4,12:+2},
+        {1:-3,2:+3,3:+7,4:+6,5:+6,6:+4,7:+2,8:+3,9:-3,10:-10,11:-8,12:-8},
       "Fin Fuckers (Cape Egmont / Warea)":
-        {1:+1,2:+1,3:-1,4:+1,5:-1,6:-4,7:-4,8:-2,9:+1,10:+1,11:+1,12:+1},
+        {1:+9,2:+12,3:+13,4:+6,5:+2,6:-7,7:-6,8:0,9:-10,10:-21,11:0,12:+2},
       "Opunake":
-        {1:+2,2:-2,3:-3,4:+1,5:-2,6:-1,7:+2,8:-1,9:+6,10:+2,11:-4,12:+5},
+        {1:+1,2:+8,3:+10,4:+9,5:-3,6:+6,7:-4,8:+4,9:-20,10:-10,11:-1,12:0},
       "Patea — Inshore":
-        {1:-16,2:-14,3:-21,4:-4,5:+2,6:+21,7:+5,8:+4,9:+15,10:+3,11:-2,12:+6},
+        {1:-1,2:+4,3:+4,4:+6,5:+2,6:0,7:-4,8:-4,9:-6,10:0,11:0,12:0},
       "Patea — Offshore Trap":
-        {1:+2,2:+2,3:+2,4:+2,5:-3,6:-6,7:0,8:-1,9:0,10:+2,11:+2,12:+2},
+        {1:-3,2:+1,3:+3,4:+4,5:+4,6:+4,7:+3,8:+3,9:+1,10:-2,11:-6,12:-12},
       "The Metal Reef":
-        {1:+9,2:+7,3:+5,4:-6,5:-1,6:-3,7:-10,8:+2,9:-1,10:-5,11:-3,12:+6},
+        {1:-1,2:+2,3:+3,4:+4,5:+3,6:+4,7:+3,8:+3,9:0,10:-4,11:-7,12:-10},
+      // Kapiti spots — no Sentinel-2 NTU data yet, keeping prior values
+      "Aeroplane Island": {1:+3,2:+4,3:+6,4:+6,5:+5,6:+4,7:+4,8:+3,9:+2,10:-3,11:-15,12:-19},
+      "Tokahaki":          {1:+3,2:+6,3:+7,4:+7,5:+8,6:+6,7:+5,8:+5,9:+5,10:-1,11:-13,12:-18},
     },
 
     // Seasonal chart data for UI (pipeline clear% by month)
@@ -204,10 +262,15 @@ const REGIONS = {
     spots: [
       {
         name: "Motumahanga (Saddleback Is.)",
-        lat: -39.043, lon: 174.022,
+        spot_type: "swell",
+        lat: -39.045543, lon: 174.014640,
         marine_lat: -39.10, marine_lon: 173.90,
-        weather_lat: -39.055, weather_lon: 174.04,
+        weather_lat: -39.055, weather_lon: 174.02,
         shelter: 0.6,  river_impact: 0.2,  papa_risk: 0.2,  swell_exposure: 0.15,
+        // Directional exposure (0=none, 1=full). Faces NW across open Tasman.
+        // Island provides shelter from direct W/SW; deepest water ~10m, rocky.
+        dir_exposure: { N:0.3, NE:0.2, E:0.1, SE:0.1, S:0.2, SW:0.4, W:0.5, NW:0.6 },
+        depth_m: 10,  // typical dive depth — shallow, so period matters less
         // Pipeline: best=S,SE,SW — worst=N,NW,E. NW push myth busted.
         best_wind_dirs: [135, 90, 180],  // SE, E, S
         worst_wind_dirs: [315, 270, 225],  // NW, W, SW
@@ -220,10 +283,14 @@ const REGIONS = {
       },
       {
         name: "Nga Motu — Inshore (Port Taranaki)",
-        lat: -39.058, lon: 174.035,
+        spot_type: "river",
+        lat: -39.053292, lon: 174.041905,
         marine_lat: -39.10, marine_lon: 173.90,
-        weather_lat: -39.07, weather_lon: 174.08,
+        weather_lat: -39.06, weather_lon: 174.06,
         shelter: 0.85, river_impact: 0.9,  papa_risk: 0.9,  swell_exposure: 0.85,
+        // Very shallow inshore — swell direction matters little, wave height does
+        dir_exposure: { N:0.3, NE:0.2, E:0.2, SE:0.5, S:0.6, SW:0.8, W:0.7, NW:0.4 },
+        depth_m: 5,
         // Pipeline: best=N,NE,NW — worst=S,SE,SW. Inverted seasonal — winter best.
         best_wind_dirs: [0, 315, 45],    // N, NW, NE
         worst_wind_dirs: [135, 180, 225], // SE, S, SW
@@ -235,14 +302,18 @@ const REGIONS = {
       },
       {
         name: "Fin Fuckers (Cape Egmont / Warea)",
-        lat: -39.283, lon: 173.748,
+        spot_type: "swell",
+        lat: -39.262931, lon: 173.753192,
         marine_lat: -39.30, marine_lon: 173.65,
-        weather_lat: -39.29, weather_lon: 173.76,
+        weather_lat: -39.27, weather_lon: 173.76,
         // Cape Egmont point — westernmost tip of Taranaki.
         // Landmark: replica lighthouse 1 & 2 at Warea Boat Club (Bayly Rd).
         // West-facing exposure. Benefits from N/NE wind (offshore). Open to SW swell.
         // No significant rivers nearby — rain effect mainly via direct runoff/papa.
         shelter: 0.25, river_impact: 0.10, papa_risk: 0.35, swell_exposure: 0.55,
+        // West-facing cape — maximum W/SW/NW exposure, sheltered from E/SE
+        dir_exposure: { N:0.4, NE:0.3, E:0.1, SE:0.1, S:0.5, SW:0.9, W:1.0, NW:0.8 },
+        depth_m: 12,
         best_wind_dirs: [0, 270, 315],    // N, W, NW
         worst_wind_dirs: [90, 45, 225],   // E, NE, SW
         wind_push: 0.6,
@@ -254,10 +325,14 @@ const REGIONS = {
       },
       {
         name: "Opunake",
-        lat: -39.458, lon: 173.858,
+        spot_type: "swell",
+        lat: -39.455188, lon: 173.837393,
         marine_lat: -39.50, marine_lon: 173.70,
-        weather_lat: -39.45, weather_lon: 173.88,
+        weather_lat: -39.45, weather_lon: 173.86,
         shelter: 0.4,  river_impact: 0.15, papa_risk: 0.2,  swell_exposure: 0.45,
+        // SW-facing — open to S/SW/W swell; Cape Egmont provides some N shelter
+        dir_exposure: { N:0.2, NE:0.1, E:0.1, SE:0.3, S:0.7, SW:0.9, W:0.8, NW:0.5 },
+        depth_m: 8,
         // Pipeline: best=N,W,NE — worst=E,SE,S. NW partially valid.
         best_wind_dirs: [315, 270, 0],    // NW, W, N
         worst_wind_dirs: [180, 135, 90],  // S, SE, E
@@ -269,10 +344,14 @@ const REGIONS = {
       },
       {
         name: "Patea — Inshore",
-        lat: -39.751, lon: 174.478,
+        spot_type: "river",
+        lat: -39.781507, lon: 174.480589,
         marine_lat: -39.80, marine_lon: 174.35,
-        weather_lat: -39.75, weather_lon: 174.50,
+        weather_lat: -39.78, weather_lon: 174.50,
         shelter: 0.3,  river_impact: 0.85, papa_risk: 0.85, swell_exposure: 0.90,
+        // Open bight — exposed to almost everything, especially SW/S
+        dir_exposure: { N:0.4, NE:0.5, E:0.3, SE:0.6, S:0.9, SW:1.0, W:0.8, NW:0.5 },
+        depth_m: 6,
         best_wind_dirs: [0, 270, 315],    // N, W, NW
         worst_wind_dirs: [135, 225, 180], // SE, SW, S
         wind_push: 0.15,
@@ -283,10 +362,14 @@ const REGIONS = {
       },
       {
         name: "Patea — Offshore Trap",
-        lat: -39.80, lon: 174.35,
-        marine_lat: -39.80, marine_lon: 174.20,
-        weather_lat: -39.75, weather_lon: 174.47,
+        spot_type: "bight",
+        lat: -39.866933, lon: 174.548300,
+        marine_lat: -39.90, marine_lon: 174.45,
+        weather_lat: -39.85, weather_lon: 174.55,
         shelter: 0.2,  river_impact: 0.25, papa_risk: 0.3,  swell_exposure: 0.20,
+        // Offshore — deeper water, longer period swell penetrates to depth
+        dir_exposure: { N:0.5, NE:0.6, E:0.4, SE:0.5, S:0.7, SW:0.8, W:0.7, NW:0.5 },
+        depth_m: 25,
         // Pipeline: best=SW,E,S — worst=N,SE,NE
         best_wind_dirs: [180, 225, 135],  // S, SW, SE
         worst_wind_dirs: [45, 270, 0],    // NE, W, N
@@ -298,10 +381,14 @@ const REGIONS = {
       },
       {
         name: "The Metal Reef",
-        lat: -38.9756, lon: 174.2769,
-        marine_lat: -38.97, marine_lon: 174.27,
-        weather_lat: -39.00, weather_lon: 174.23,
+        spot_type: "swell",
+        lat: -38.911833, lon: 174.271650,
+        marine_lat: -38.95, marine_lon: 174.20,
+        weather_lat: -38.93, weather_lon: 174.28,
         shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,
+        // Pohokura platform — faces NW, partially sheltered by headland from S/SW
+        dir_exposure: { N:0.3, NE:0.2, E:0.2, SE:0.3, S:0.4, SW:0.5, W:0.7, NW:0.8 },
+        depth_m: 18,
         // Pipeline: best=E,NE,N — worst=S,W,SW. NE not NW.
         best_wind_dirs: [0, 315, 45],     // N, NW, NE
         worst_wind_dirs: [180, 135, 270], // S, SE, W
@@ -331,7 +418,7 @@ const REGIONS = {
     footer: "Kāpiti Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Supabase · Built for Kāpiti divers 🐟",
 
     W: {
-      w_swell: 0.40, w_wind: 0.20, w_rain: 0.40,
+      w_swell: 0.50, w_wind: 0.20, w_rain: 0.30,  // regression: same swell dominance as Taranaki
       push_mult: 16.0,
       rain_pen_mult: 14.0,
       cur_north: 12.0, cur_south: 10.0, bight_mult: 8.0,
@@ -368,10 +455,13 @@ const REGIONS = {
     spots: [
       {
         name: "Aeroplane Island",
-        lat: -40.868, lon: 174.938,
+        spot_type: "swell",
+        lat: -40.882084, lon: 174.927163,
         marine_lat: -40.860, marine_lon: 174.960,
         sat_lat: -40.868, sat_lon: 174.910,
         shelter: 0.3, river_impact: 0.3, papa_risk: 0.0, swell_exposure: 0.35,
+        dir_exposure: { N:0.3, NE:0.2, E:0.1, SE:0.2, S:0.4, SW:0.6, W:0.8, NW:0.7 },
+        depth_m: 12,
         best_wind_dirs: [0, 45, 315],    // N, NE, NW
         worst_wind_dirs: [225, 270, 180], // SW, W, S
         wind_push: 0.9,
@@ -382,10 +472,13 @@ const REGIONS = {
       },
       {
         name: "Tokahaki (North Tip)",
-        lat: -40.840, lon: 174.890,
+        spot_type: "swell",
+        lat: -40.819471, lon: 174.946638,
         marine_lat: -40.840, marine_lon: 174.910,
         sat_lat: -40.840, sat_lon: 174.870,
         shelter: 0.2, river_impact: 0.2, papa_risk: 0.0, swell_exposure: 0.45,
+        dir_exposure: { N:0.2, NE:0.2, E:0.1, SE:0.2, S:0.5, SW:0.7, W:0.9, NW:0.8 },
+        depth_m: 15,
         best_wind_dirs: [0, 180, 225],   // N, S, SW
         worst_wind_dirs: [135, 90, 270],  // SE, E, W
         wind_push: 1.0,
@@ -396,10 +489,13 @@ const REGIONS = {
       },
       {
         name: "Kāpiti West Face",
-        lat: -40.860, lon: 174.882,
+        spot_type: "swell",
+        lat: -40.855557, lon: 174.889112,
         marine_lat: -40.860, marine_lon: 174.860,
         sat_lat: -40.860, sat_lon: 174.862,
         shelter: 0.5, river_impact: 0.5, papa_risk: 0.0, swell_exposure: 0.6,
+        dir_exposure: { N:0.2, NE:0.3, E:0.1, SE:0.3, S:0.6, SW:0.8, W:1.0, NW:0.9 },
+        depth_m: 18,
         best_wind_dirs: [0, 225, 270],   // N, SW, W
         worst_wind_dirs: [90, 135, 180],  // E, SE, S
         wind_push: 0.4,
@@ -422,21 +518,57 @@ function dirName(deg) {
 
 // ── Scoring functions ──────────────────────────────────────────────────────────
 
-function swellScore(h, p, spot) {
-  const exposure = spot?.swell_exposure ?? 0.5;
-  let s;
-  if (exposure >= 0.75) {
-    s = h < 0.5 ? 100 : h < 0.75 ? 72 : h < 1.05 ? 40 : h < 1.35 ? 18 : h < 1.65 ? 6 : 0;
-  } else if (exposure >= 0.4) {
-    s = h < 0.6 ? 96 : h < 1.1 ? 84 : h < 1.6 ? 70 : h < 2.1 ? 54 : h < 2.6 ? 32 : h < 3.1 ? 12 : 3;
-  } else {
-    s = h < 0.5 ? 100 : h < 1.0 ? 96 : h < 1.5 ? 88 : h < 2.0 ? 76 : h < 2.5 ? 58 : h < 3.0 ? 34 : 12;
+// Convert degrees to compass octant label
+function degToOctant(deg) {
+  const d = ((deg % 360) + 360) % 360;
+  const octants = ["N","NE","E","SE","S","SW","W","NW"];
+  return octants[Math.round(d / 45) % 8];
+}
+
+// Directional exposure factor for a spot given swell direction (0–1)
+function dirExposureFactor(swellDir, spot) {
+  if (!spot?.dir_exposure || swellDir == null || swellDir === 0) {
+    return spot?.swell_exposure ?? 0.5;
   }
-  if (p > 14) s *= 0.80;
-  else if (p > 11) s *= 0.90;
-  const penaltyMult = exposure >= 0.75 ? 0.55 : 0.0;
-  const extraPenalty = exposure * (100 - s) * penaltyMult;
-  return Math.max(0, s - extraPenalty);
+  const octant = degToOctant(swellDir);
+  return spot.dir_exposure[octant] ?? spot.swell_exposure ?? 0.5;
+}
+
+// Period-depth penetration factor: how much does this period disturb the seabed?
+// Orbital motion depth ≈ period² × 0.12 metres
+// Returns 0–1: 1.0 = fully disturbing seabed, 0 = barely reaching depth
+function periodDepthFactor(period, depthM) {
+  if (!period || period <= 0 || !depthM) return 0.5;
+  const disturbanceDepth = period * period * 0.12;
+  if (disturbanceDepth >= depthM) return 1.0;          // fully disturbed
+  if (disturbanceDepth < depthM * 0.3) return 0.2;     // barely reaching
+  return 0.2 + 0.8 * (disturbanceDepth / depthM);      // linear between
+}
+
+function swellScore(h, p, spot, swellDir) {
+  const dirFactor    = dirExposureFactor(swellDir, spot);
+  const depthFactor  = periodDepthFactor(p, spot?.depth_m ?? 10);
+  // Effective height — scale by direction and period-depth impact
+  // Long-period swell from an exposed direction is maximally penalising
+  const periodWeight = 0.4 + 0.6 * depthFactor;  // period matters more at depth
+  const effectiveH   = h * (0.3 + 0.7 * dirFactor) * periodWeight;
+
+  // Score based on effective height (same breakpoints, now direction/period adjusted)
+  let s = effectiveH < 0.4 ? 100
+        : effectiveH < 0.7 ? 90
+        : effectiveH < 1.0 ? 76
+        : effectiveH < 1.4 ? 58
+        : effectiveH < 1.8 ? 36
+        : effectiveH < 2.3 ? 16
+        : effectiveH < 3.0 ? 5
+        : 0;
+
+  // Extra penalty for highly exposed spots after swell history builds up
+  const exposure = spot?.swell_exposure ?? 0.5;
+  if (exposure >= 0.75) {
+    s = Math.max(0, s - exposure * (100 - s) * 0.45);
+  }
+  return Math.max(0, Math.round(s));
 }
 
 function windScore(spd, dir) {
@@ -502,8 +634,18 @@ function recoveryBonus(rainHistory, swellHistory) {
   return 0;
 }
 
+// Merge global W with spot-type profile overrides
+// W.SPOT_TYPE_WEIGHTS is defined in each region's W block (Taranaki has it; Kapiti falls back to global)
+function mergeSpotWeights(W, spot) {
+  if (!W.SPOT_TYPE_WEIGHTS || !spot.spot_type) return W;
+  const profile = W.SPOT_TYPE_WEIGHTS[spot.spot_type];
+  if (!profile) return W;
+  return { ...W, ...profile };
+}
+
 function scoreSpot(cond, spot, W) {
-  const s  = swellScore(cond.swell_h, cond.swell_p, spot);
+  W = mergeSpotWeights(W, spot);
+  const s  = swellScore(cond.swell_h, cond.swell_p, spot, cond.swell_dir);
   const wn = windScore(cond.wind_spd, cond.wind_dir);
 
   let papaRiskEffective = spot.papa_risk;
@@ -775,7 +917,7 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
         img.onload = () => {
           const c = document.createElement("canvas");
           c.width = 256; c.height = 256;
-          const ctx = c.getContext("2d");
+          const ctx = c.getContext("2d", { willReadFrequently: true });
           ctx.drawImage(img, 0, 0);
           resolve((px, py, radius = 2) => {
             const pixels = [];
@@ -814,7 +956,7 @@ async function sampleGibsTile(layer, date, zoom, fmt, spots) {
 
           const turbidity = layer.includes("TrueColor") ? calcTurbidity(r, g, b) : null;
 
-          console.log(`[Satellite] ${spot.name} ${date}: rgb(${r},${g},${b}) turbidity=${turbidity} (${waterPixels.length}/${allPixels.length} valid px)`);
+          if (turbidity !== null) console.log(`[Satellite] ${spot.name} ${date}: rgb(${r},${g},${b}) turbidity=${turbidity} (${waterPixels.length}/${allPixels.length} valid px)`);
 
           results[spot.name] = { r, g, b, turbidity };
         } catch(e) {}
@@ -1107,6 +1249,11 @@ function condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist) {
     swell_h:        safe(marine.hourly?.wave_height?.[mIdx]),
     swell_p:        safe(marine.hourly?.wave_period?.[mIdx]),
     swell_dir:      safe(marine.hourly?.wave_direction?.[mIdx]),
+    swell_wave_h:   safe(marine.hourly?.swell_wave_height?.[mIdx]),
+    swell_wave_p:   safe(marine.hourly?.swell_wave_period?.[mIdx]),
+    swell_wave_dir: safe(marine.hourly?.swell_wave_direction?.[mIdx]),
+    wind_wave_h:    safe(marine.hourly?.wind_wave_height?.[mIdx]),
+    wind_wave_p:    safe(marine.hourly?.wind_wave_period?.[mIdx]),
     swell_hist_72h: hist,
     wind_spd:       windSpd,
     wind_dir:       windDir,
@@ -1129,9 +1276,15 @@ function getDailyScores(marine, weather, spot, W) {
   const mByDate = {};
   mTimes.forEach((t, i) => {
     const date = t.split("T")[0];
-    if (!mByDate[date]) mByDate[date] = { waveH: [], waveP: [], sst: [], curVel: [], curDir: [] };
+    if (!mByDate[date]) mByDate[date] = { waveH: [], waveP: [], waveDir: [], swellH: [], swellP: [], swellDir: [], windWaveH: [], windWaveP: [], sst: [], curVel: [], curDir: [] };
     mByDate[date].waveH.push(safe(marine.hourly.wave_height?.[i]));
     mByDate[date].waveP.push(safe(marine.hourly.wave_period?.[i]));
+    mByDate[date].waveDir.push(safe(marine.hourly.wave_direction?.[i]));
+    mByDate[date].swellH.push(safe(marine.hourly.swell_wave_height?.[i]));
+    mByDate[date].swellP.push(safe(marine.hourly.swell_wave_period?.[i]));
+    mByDate[date].swellDir.push(safe(marine.hourly.swell_wave_direction?.[i]));
+    mByDate[date].windWaveH.push(safe(marine.hourly.wind_wave_height?.[i]));
+    mByDate[date].windWaveP.push(safe(marine.hourly.wind_wave_period?.[i]));
     mByDate[date].sst.push(safe(marine.hourly.sea_surface_temperature?.[i]));
     mByDate[date].curVel.push(safe(marine.hourly.ocean_current_velocity?.[i]));
     mByDate[date].curDir.push(safe(marine.hourly.ocean_current_direction?.[i]));
@@ -1202,7 +1355,12 @@ function getDailyScores(marine, weather, spot, W) {
     const cond = {
       swell_h:         avg(m?.waveH ?? [0]),
       swell_p:         avg(m?.waveP ?? [0]),
-      swell_dir:       0,
+      swell_dir:       avg(m?.waveDir ?? [0]),
+      swell_wave_h:    avg(m?.swellH ?? [0]),
+      swell_wave_p:    avg(m?.swellP ?? [0]),
+      swell_wave_dir:  avg(m?.swellDir ?? [0]),
+      wind_wave_h:     avg(m?.windWaveH ?? [0]),
+      wind_wave_p:     avg(m?.windWaveP ?? [0]),
       swell_hist_72h:  swellHist72,
       wind_spd:        avg(w.wind),
       wind_dir:        avg(w.windDir),
@@ -1597,7 +1755,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
                   try {
                     const c = document.createElement("canvas");
                     c.width = 64; c.height = 64;
-                    const ctx = c.getContext("2d");
+                    const ctx = c.getContext("2d", { willReadFrequently: true });
                     ctx.drawImage(img, 0, 0, 64, 64);
                     const data = ctx.getImageData(0, 0, 64, 64).data;
                     let waterCount = 0, total = 0;
@@ -1608,7 +1766,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
                       if (classifyPixel(r, g, b, a) === "water") waterCount++;
                     }
                     const waterFraction = total > 0 ? waterCount / total : 0;
-                    console.log(`[Satellite probe] ${dateStr}: ${waterCount}/${total} water pixels (${(waterFraction*100).toFixed(0)}%)`);
+                    if (waterCount > 0) console.log(`[Satellite probe] ${dateStr}: ${waterCount}/${total} water pixels (${(waterFraction*100).toFixed(0)}%)`);
                     resolve(waterFraction > 0.25); // need at least 25% valid ocean pixels
                   } catch { resolve(true); }
                 };
@@ -1667,7 +1825,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
                 const raw = (swirFraction - 0.18) / (0.60 - 0.18) * 100;
                 turbidity = Math.min(100, Math.max(0, Math.round(raw)));
                 turbiditySource = "bands721";
-                console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
+                if (turbidity > 0) console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
               }
             }
 
@@ -1757,7 +1915,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
               }
             } else {
               // Afternoon/evening with no stored reading — report that
-              console.log("[Webcam] No stored morning reading for today and outside morning window — skipping live fetch");
+              console.debug("[Webcam] No stored morning reading for today and outside morning window — skipping live fetch");
               if (!cancelled) setWebcamStatus("no-morning-data");
             }
           } catch(e) {
@@ -1778,7 +1936,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
         const mLon = spot.marine_lon  ?? spot.lon;
 
         try {
-          const [weatherRes, marineRes, currentWeatherRes] = await Promise.all([
+          const [weatherRes, marineRes] = await Promise.all([
             fetch(
               `https://api.open-meteo.com/v1/forecast?latitude=${wLat}&longitude=${wLon}` +
               `&hourly=wind_speed_10m,wind_direction_10m,precipitation` +
@@ -1786,40 +1944,26 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
             ),
             fetch(
               `https://marine-api.open-meteo.com/v1/marine?latitude=${mLat}&longitude=${mLon}` +
-              `&hourly=wave_height,wave_period,wave_direction,sea_surface_temperature,ocean_current_velocity,ocean_current_direction` +
+              `&hourly=wave_height,wave_period,wave_direction,swell_wave_height,swell_wave_period,swell_wave_direction,wind_wave_height,wind_wave_period,wind_wave_direction,sea_surface_temperature,ocean_current_velocity,ocean_current_direction` +
               `&timezone=Pacific%2FAuckland&forecast_days=7&past_days=9`
-            ),
-            fetch(
-              `https://api.open-meteo.com/v1/forecast?latitude=${wLat}&longitude=${wLon}` +
-              `&current=wind_speed_10m,wind_direction_10m` +
-              `&wind_speed_unit=kmh&timezone=Pacific%2FAuckland&forecast_days=1`
             ),
           ]);
 
           const weather = await weatherRes.json();
           const marine  = await marineRes.json();
-          const currentWeather = await currentWeatherRes.json();
 
           // Open-Meteo returns 4xx with a JSON error body — surface these early
           if (weather.error) throw new Error(`Weather API: ${weather.reason ?? "unknown error"}`);
           if (marine.error)  throw new Error(`Marine API: ${marine.reason ?? "unknown error"}`);
 
-          // Merge current block into weather object
-          if (currentWeather.current) {
-            weather.current = currentWeather.current;
-          }
-
-          // Guard: if current block has wind speed but no direction, patch from hourly
-          if (
-            weather.current?.wind_speed_10m != null &&
-            weather.current?.wind_direction_10m == null
-          ) {
-            const wIdxFallback = nowIdx(weather.hourly?.time ?? []);
-            const fallbackDir = weather.hourly?.wind_direction_10m?.[wIdxFallback];
-            if (fallbackDir != null) {
-              console.warn(`[${spot.name}] current block missing wind_direction — patching from hourly: ${fallbackDir}°`);
-              weather.current.wind_direction_10m = fallbackDir;
-            }
+          // Build current wind from hourly at the current hour index
+          // (avoids a separate current= fetch which triggers 400s on the free tier)
+          const wIdxNow = nowIdx(weather.hourly?.time ?? []);
+          const spd = weather.hourly?.wind_speed_10m?.[wIdxNow];
+          const dir = weather.hourly?.wind_direction_10m?.[wIdxNow];
+          if (spd != null && dir != null) {
+            weather.current = { wind_speed_10m: spd, wind_direction_10m: dir };
+            console.log(`[${spot.name}] Current wind from hourly[${wIdxNow}]: ${spd} kph @ ${dir}°`);
           }
 
           const wIdx0 = nowIdx(weather.hourly?.time ?? []);
@@ -1941,7 +2085,7 @@ function ForecastBar({ days }) {
           const color = scoreToColor(d.score);
           return (
             <div key={d.date} className="forecast-day"
-              title={`${d.date}: Score ${d.score}\nSwell ${d.cond.swell_h.toFixed(1)}m ${d.cond.swell_p.toFixed(0)}s (72h peak: ${d.cond.swell_hist_72h.toFixed(1)}m)\nWind ${d.cond.wind_spd.toFixed(0)}kph (${(d.cond.wind_spd / 1.852).toFixed(0)}kt) ${dirName(d.cond.wind_dir)}\nSST ${d.cond.sst.toFixed(1)}°C\nRain 48h: ${d.cond.rain_48h.toFixed(1)}mm · ${d.cond.days_since_rain}d since rain`}>
+              title={`${d.date}: Score ${d.score}\nSwell ${d.cond.swell_h.toFixed(1)}m ${d.cond.swell_p.toFixed(0)}s ${dirName(d.cond.swell_dir)} (72h peak: ${d.cond.swell_hist_72h.toFixed(1)}m)\nGroundswell ${(d.cond.swell_wave_h??0).toFixed(1)}m ${(d.cond.swell_wave_p??0).toFixed(0)}s ${dirName(d.cond.swell_wave_dir??0)} · Chop ${(d.cond.wind_wave_h??0).toFixed(1)}m ${(d.cond.wind_wave_p??0).toFixed(0)}s\nWind ${d.cond.wind_spd.toFixed(0)}kph (${(d.cond.wind_spd / 1.852).toFixed(0)}kt) ${dirName(d.cond.wind_dir)}\nSST ${d.cond.sst.toFixed(1)}°C\nRain 48h: ${d.cond.rain_48h.toFixed(1)}mm · ${d.cond.days_since_rain}d since rain`}>
               <div className="fday-name">{dayName}</div>
               <div className="fday-bar-wrap">
                 <div className="fday-bar" style={{
@@ -2191,14 +2335,13 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                 strokeDashoffset={157 - ((score ?? 0) / 100) * 157}
                 style={{ transition: "stroke-dashoffset 1s ease" }}
               />
-              <text x="60" y="52" textAnchor="middle" fill={color} fontSize="18" fontWeight="bold" fontFamily="'Space Mono', monospace">{score}</text>
-              <text x="60" y="63" textAnchor="middle" fill={color} fontSize="7.5" fontFamily="'Space Mono', monospace">{visLabel(score)}</text>
+              <text x="60" y="48" textAnchor="middle" fill={color} fontSize="22">{(score ?? 0) >= 80 ? "🤿" : (score ?? 0) >= 60 ? "🐟" : (score ?? 0) >= 40 ? "🦞" : (score ?? 0) >= 20 ? "🌊" : "🚫"}</text>
+              <text x="60" y="62" textAnchor="middle" fill={color} fontSize="8" fontWeight="bold" fontFamily="'Space Mono', monospace">{scoreToLabel(score)}</text>
             </svg>
           </div>
 
           <div className="viz-label" style={{ color }}>
-            {(score ?? 0) >= 80 ? "🤿" : (score ?? 0) >= 60 ? "🐟" : (score ?? 0) >= 40 ? "🦞" : (score ?? 0) >= 20 ? "🌊" : "🚫"}{" "}
-            {scoreToLabel(score)}
+            {visLabel(score)}
             {data.biasMult && Math.abs(data.biasMult - 1.0) >= 0.05 && (
               <span className="bias-indicator" title={`Bias-adjusted from raw score ${data.rawScore}`}>
                 {data.biasMult > 1 ? " ↑" : " ↓"} adj
@@ -2228,7 +2371,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
           {/* Conditions grid */}
           <div className="conditions">
             {[
-              { icon: "🌊", val: `${data.cond.swell_h.toFixed(1)}m ${data.cond.swell_p.toFixed(0)}s`, key: "Swell" },
+              { icon: "🌊", val: `${data.cond.swell_h.toFixed(1)}m ${data.cond.swell_p.toFixed(0)}s ${dirName(data.cond.swell_dir)}`, key: "Swell" },
               { icon: "💨", val: (() => {
                   const spd = data.cond.wind_spd;
                   const dir = dirName(data.cond.wind_dir);
@@ -2310,7 +2453,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
             ))}
           </div>
 
-          {/* Factor breakdown */}
+          {/* Factor breakdown — hidden from UI, scoring runs in background
           <div className="factors-grid">
             <FactorBar label="Swell" value={data.factors.swell} isDelta={false} />
             <FactorBar label="Wind" value={data.factors.wind} isDelta={false} />
@@ -2320,7 +2463,6 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
             <FactorBar label="SST" value={data.factors.sst} isDelta={true} />
             <FactorBar label="Tide" value={data.factors.tide} isDelta={true} />
             <FactorBar label="Recovery" value={data.factors.recovery ?? 0} isDelta={true} />
-            {/* CHANGE 4: Satellite factor bar */}
             {data.factors.satellite != null && data.factors.satellite !== 0 && (
               <FactorBar label="Satellite" value={data.factors.satellite} isDelta={true} />
             )}
@@ -2331,6 +2473,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
               <FactorBar label="River gauge" value={data.factors.riverGauge} isDelta={true} />
             )}
           </div>
+          */}
 
           <div className="spot-note">{spot.note}</div>
 
@@ -2383,7 +2526,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                           <span style={{ color: "#345", fontSize: "0.68rem" }}>{shortDate}</span>
                         </td>
                         <td style={{ color: scoreToColor(d.score), fontFamily: "'Space Mono',monospace", fontWeight: "700" }}>{d.score}</td>
-                        <td>{d.cond.swell_h.toFixed(1)}m {d.cond.swell_p.toFixed(0)}s</td>
+                        <td>{d.cond.swell_h.toFixed(1)}m {d.cond.swell_p.toFixed(0)}s {dirName(d.cond.swell_dir)}</td>
                         <td>{d.cond.wind_spd.toFixed(0)}kph ({(d.cond.wind_spd / 1.852).toFixed(0)}kt) {dirName(d.cond.wind_dir)}</td>
                         <td>{d.cond.sst.toFixed(1)}°C</td>
                         <td>{d.cond.rain_48h.toFixed(1)}mm</td>
@@ -2453,7 +2596,7 @@ function BestDayPanel({ spotDataMap }) {
           {info.spots.sort((a, b) => b.score - a.score).map(s => (
             <span key={s.spotName} className="best-spot-chip"
               style={{ borderColor: scoreToColor(s.score) + "55", color: scoreToColor(s.score) }}>
-              {s.spotName} <strong>{s.score}</strong>
+              {s.spotName} <strong>{scoreToLabel(s.score)}</strong>
             </span>
           ))}
         </div>
@@ -2553,7 +2696,7 @@ function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, map
           try {
             const c = document.createElement("canvas");
             c.width = 32; c.height = 32;
-            const ctx = c.getContext("2d");
+            const ctx = c.getContext("2d", { willReadFrequently: true });
             ctx.drawImage(img, 0, 0, 32, 32);
             const px = ctx.getImageData(0, 0, 32, 32).data;
             const uniq = new Set();
@@ -3539,6 +3682,7 @@ export default function App() {
       url.searchParams.set("region", region);
       window.history.replaceState({}, "", url);
     } catch(e) {}
+    logUsageEvent("session_start", region);
   }, [region]);
 
   const now = new Date().toLocaleDateString("en-NZ", {
