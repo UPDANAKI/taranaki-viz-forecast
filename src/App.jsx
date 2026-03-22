@@ -228,27 +228,29 @@ const REGIONS = {
     // Derived from median NTU per spot per month vs annual median.
     // Applied as: score += seasonal[month] * W.seasonal_mult
     // Positive = cleaner than average (bonus), Negative = dirtier (penalty)
+    // spotSeasonal recalibrated 23 Mar 2026
+    // Source: 4,095 S2 SWIR observations (2017-2026), merged with full weather feature matrix
     spotSeasonal: {
       "Motumahanga (Saddleback Is.)":
-        {1:-7,2:-1,3:+5,4:+7,5:+6,6:+8,7:+1,8:+3,9:-8,10:-10,11:-15,12:-15},
+        {1:-15,2:-15,3:+15,4:+15,5:+15,6:+15,7:+13,8:+15,9:-13,10:-15,11:-15,12:-15},
       "Nga Motu — Inshore (Port Taranaki)":
-        {1:-3,2:+1,3:+8,4:+8,5:+8,6:+3,7:+3,8:-1,9:-11,10:-15,11:-15,12:-15},
+        {1:-15,2:-15,3:+13,4:+15,5:+15,6:+15,7:+15,8:+15,9:-13,10:-15,11:-15,12:-15},
       "Fin Fuckers (Cape Egmont / Warea)":
-        {1:+3,2:+6,3:+8,4:+1,5:0,6:+2,7:-10,8:0,9:-6,10:-6,11:-2,12:-2},
+        {1:-15,2:-10,3:+15,4:+15,5:+10,6:+15,7:+15,8:+10,9:-11,10:-15,11:-15,12:-15},
       "Opunake":
-        {1:-2,2:+4,3:+4,4:+6,5:+1,6:+8,7:-4,8:+2,9:-5,10:-5,11:-1,12:-2},
+        {1:-15,2:0,3:+15,4:+15,5:0,6:+15,7:+15,8:+15,9:-15,10:-15,11:-15,12:-15},
       "Patea — Inshore":
-        {1:-2,2:+1,3:+1,4:+2,5:+1,6:-3,7:0,8:-8,9:-8,10:0,11:0,12:0},
+        {1:-15,2:-15,3:-14,4:+10,5:+10,6:+4,7:+5,8:0,9:0,10:0,11:0,12:0},
       "Patea — Offshore Trap":
-        {1:-11,2:-2,3:+1,4:+8,5:+6,6:+7,7:+5,8:+3,9:-1,10:-8,11:-15,12:-15},
+        {1:-15,2:-15,3:-15,4:-11,5:-7,6:+1,7:+7,8:+6,9:+4,10:+3,11:0,12:0},
       "The Metal Reef":
-        {1:-2,2:-3,3:+5,4:+6,5:+3,6:+9,7:+8,8:+2,9:-10,10:-15,11:-15,12:-15},
+        {1:-15,2:-6,3:+6,4:+13,5:+10,6:+15,7:+14,8:+7,9:-12,10:-15,11:-15,12:-15},
       "Aeroplane Island":
-        {1:-7,2:0,3:+2,4:+4,5:+5,6:+5,7:+4,8:0,9:0,10:-7,11:-12,12:-15},
+        {1:-15,2:-15,3:-2,4:+4,5:+12,6:+2,7:+12,8:+10,9:+2,10:-15,11:-15,12:-15},
       "Tokahaki":
-        {1:-8,2:+5,3:+1,4:+4,5:+8,6:+5,7:+2,8:-1,9:-6,10:-15,11:-15,12:-3},
+        {1:-15,2:-15,3:+4,4:+5,5:+5,6:0,7:+10,8:+7,9:0,10:-15,11:-15,12:-15},
       "Kapiti West":
-        {1:-8,2:-4,3:+4,4:+7,5:+7,6:+8,7:+6,8:+1,9:-1,10:-7,11:-15,12:-4},
+        {1:-15,2:-15,3:+6,4:+9,5:+13,6:+13,7:+15,8:+8,9:-6,10:-15,11:-15,12:-15},
     },
 
     // Seasonal chart data for UI (pipeline clear% by month)
@@ -266,7 +268,7 @@ const REGIONS = {
       { month:"Nov", clear:42, blueIdx:5 },
       { month:"Dec", clear:40, blueIdx:4 },
     ],
-    seasonalNote: "3,000+ Sentinel-2 observations · 12 spots · recalibrated Mar 2026",
+    seasonalNote: "4,095 S2 SWIR observations · 12 spots · recalibrated 23 Mar 2026",
 
     spots: [
       {
@@ -531,7 +533,7 @@ function dirName(deg) {
 // The app interface is identical — callers don't need to change.
 
 // Supabase Edge Function — ONNX scoring (Deno, deployed via supabase functions deploy)
-const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
+const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score";
 const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
 
 // In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
