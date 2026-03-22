@@ -2,6 +2,6 @@
   "name": "vizcast-functions",
   "version": "1.0.0",
   "dependencies": {
-    "onnxruntime-node": "^1.17.0"
+    "onnxruntime-web": "^1.17.0"
   }
 }

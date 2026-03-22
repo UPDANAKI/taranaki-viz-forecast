@@ -16,22 +16,18 @@ const fs   = require("fs");
 
 const SUPABASE_STORAGE = "https://mgcwrktuplnjtxkbsypc.supabase.co/storage/v1/object/public/vizcast-models";
 
-// ── Lazy-load ONNX runtime (cold start optimisation) ─────────────────────────
+// ── Model cache (persists across warm Lambda invocations) ────────────────────
 let ort = null;
 let session = null;
 let MODEL_COLS = null;
 let MODEL_META = null;
 
 async function fetchToTmp(url, filename) {
-  // Download file from Supabase Storage and cache in /tmp
-  // /tmp persists across warm Lambda invocations — only downloads once per container
   const tmpPath = path.join(os.tmpdir(), filename);
   if (fs.existsSync(tmpPath)) return tmpPath;
-
-  console.log(`[score] Downloading ${filename} from Supabase Storage...`);
+  console.log(`[score] Downloading ${filename}...`);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch ${filename}: ${res.status}`);
-
   const buf = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(tmpPath, buf);
   console.log(`[score] Cached ${filename} (${buf.length} bytes)`);
@@ -41,7 +37,10 @@ async function fetchToTmp(url, filename) {
 async function loadModel() {
   if (session) return;
 
-  ort = require("onnxruntime-node");
+  // Use onnxruntime-web in Node.js mode — pure WASM, no native binaries,
+  // small enough to deploy on Netlify Functions
+  const { InferenceSession, Tensor } = await import("onnxruntime-web/node");
+  ort = { InferenceSession, Tensor };
 
   const [modelPath, colsPath, metaPath] = await Promise.all([
     fetchToTmp(`${SUPABASE_STORAGE}/vizcast_model.onnx`,      "vizcast_model.onnx"),
