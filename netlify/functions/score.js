@@ -4,14 +4,17 @@
 // Receives { cond, spot, W } from App.jsx, builds the 333-feature vector,
 // runs the XGBoost ONNX model, returns { score, predicted_ntu, factors, plumeReach }
 //
-// Deploy alongside:
-//   vizcast_model.onnx         — XGBoost model (S2-only retrain, R²=0.42)
-//   vizcast_model_cols.json    — ordered list of 333 feature names
-//   vizcast_model_meta.json    — NTU→score thresholds + metadata
+// Model files served from Supabase Storage (too large to bundle with function):
+//   vizcast-models/vizcast_model.onnx
+//   vizcast-models/vizcast_model_cols.json
+//   vizcast-models/vizcast_model_meta.json
 // ══════════════════════════════════════════════════════════════════════════════
 
+const os   = require("os");
 const path = require("path");
 const fs   = require("fs");
+
+const SUPABASE_STORAGE = "https://mgcwrktuplnjtxkbsypc.supabase.co/storage/v1/object/public/vizcast-models";
 
 // ── Lazy-load ONNX runtime (cold start optimisation) ─────────────────────────
 let ort = null;
@@ -19,14 +22,32 @@ let session = null;
 let MODEL_COLS = null;
 let MODEL_META = null;
 
+async function fetchToTmp(url, filename) {
+  // Download file from Supabase Storage and cache in /tmp
+  // /tmp persists across warm Lambda invocations — only downloads once per container
+  const tmpPath = path.join(os.tmpdir(), filename);
+  if (fs.existsSync(tmpPath)) return tmpPath;
+
+  console.log(`[score] Downloading ${filename} from Supabase Storage...`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch ${filename}: ${res.status}`);
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(tmpPath, buf);
+  console.log(`[score] Cached ${filename} (${buf.length} bytes)`);
+  return tmpPath;
+}
+
 async function loadModel() {
   if (session) return;
 
   ort = require("onnxruntime-node");
 
-  const modelPath = path.join(__dirname, "vizcast_model.onnx");
-  const colsPath  = path.join(__dirname, "vizcast_model_cols.json");
-  const metaPath  = path.join(__dirname, "vizcast_model_meta.json");
+  const [modelPath, colsPath, metaPath] = await Promise.all([
+    fetchToTmp(`${SUPABASE_STORAGE}/vizcast_model.onnx`,      "vizcast_model.onnx"),
+    fetchToTmp(`${SUPABASE_STORAGE}/vizcast_model_cols.json`, "vizcast_model_cols.json"),
+    fetchToTmp(`${SUPABASE_STORAGE}/vizcast_model_meta.json`, "vizcast_model_meta.json"),
+  ]);
 
   session    = await ort.InferenceSession.create(modelPath);
   MODEL_COLS = JSON.parse(fs.readFileSync(colsPath, "utf8"));
