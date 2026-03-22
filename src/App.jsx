@@ -531,7 +531,7 @@ function dirName(deg) {
 // The app interface is identical — callers don't need to change.
 
 // Supabase Edge Function — ONNX scoring (Deno, deployed via supabase functions deploy)
-const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score";
+const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
 const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
 
 // In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
