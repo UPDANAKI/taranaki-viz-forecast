@@ -37,10 +37,8 @@ async function fetchToTmp(url, filename) {
 async function loadModel() {
   if (session) return;
 
-  // Use onnxruntime-web in Node.js mode — pure WASM, no native binaries,
-  // small enough to deploy on Netlify Functions
-  const { InferenceSession, Tensor } = await import("onnxruntime-web/node");
-  ort = { InferenceSession, Tensor };
+  // Use onnxruntime-web — pure WASM, no native binaries
+  ort = require("onnxruntime-web");
 
   const [modelPath, colsPath, metaPath] = await Promise.all([
     fetchToTmp(`${SUPABASE_STORAGE}/vizcast_model.onnx`,      "vizcast_model.onnx"),
