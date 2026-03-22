@@ -530,40 +530,21 @@ function dirName(deg) {
 // This stub sends cond + spot + W to the Edge Function and returns the result.
 // The app interface is identical — callers don't need to change.
 
-// Netlify ONNX scoring function — replaces Supabase score-full Edge Function
-// Falls back to legacy Supabase endpoint if Netlify function returns non-OK
-const SCORE_API        = "/.netlify/functions/score";
-const SCORE_API_LEGACY = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
-const SCORE_KEY        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
+// Supabase Edge Function — ONNX scoring (Deno, deployed via supabase functions deploy)
+const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score";
+const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
 
 // In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
 const _scoreCache = new Map();
 
 async function scoreSpot(cond, spot, W) {
   // Cache key: spot + date (for forecast) or current 15min bucket (for today)
-  // Must include date so 7-day forecast gets distinct scores per day
   const dateKey = cond._forecastDate ?? Math.floor(Date.now() / 900000);
   const key = `${spot.name}:${dateKey}`;
   if (_scoreCache.has(key)) return _scoreCache.get(key);
 
-  // Try Netlify ONNX function first
   try {
     const res = await fetch(SCORE_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cond, spot, W }),
-    });
-    if (!res.ok) throw new Error(`Netlify score ${res.status}`);
-    const result = await res.json();
-    _scoreCache.set(key, result);
-    return result;
-  } catch (netlifyErr) {
-    console.warn("[scoreSpot] Netlify function unavailable, falling back to Supabase:", netlifyErr.message);
-  }
-
-  // Fallback: legacy Supabase Edge Function
-  try {
-    const res = await fetch(SCORE_API_LEGACY, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -571,12 +552,12 @@ async function scoreSpot(cond, spot, W) {
       },
       body: JSON.stringify({ cond, spot, W }),
     });
-    if (!res.ok) throw new Error(`Supabase score ${res.status}`);
+    if (!res.ok) throw new Error(`Score API ${res.status}`);
     const result = await res.json();
     _scoreCache.set(key, result);
     return result;
   } catch (err) {
-    console.error("[scoreSpot] Both score APIs failed:", err.message);
+    console.error("[scoreSpot] API error:", err.message);
     return { score: 50, plumeReach: 0, factors: {} };
   }
 }
