@@ -173,73 +173,82 @@ const REGIONS = {
     sessionWelcome: "welcomed",
     footer: "Kāpiti Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Supabase · Built for Kāpiti divers 🐟",
 
-    // Scoring weights — Taranaki-calibrated
+    // Scoring weights — calibrated from XGBoost regression (79k MODIS+S2 obs, Mar 2026)
+    // Feature group importances: swell 26.5%, rain 13.1%, wind_u 9.3%, wind_v 8.2%,
+    // wind_speed 7.5%, SST 8.6%, spot_metadata 5.3%
+    // Key findings: rain peaks at d1 (yesterday), days_since_rain is #1 predictor,
+    // wind_v_d2 (northerly 2 days prior) r=-0.202 with turbidity
     W: {
-      w_swell: 0.55, w_wind: 0.20, w_rain: 0.25,  // regression: swell 4x more important than rain
-      push_mult: 14.0,   // replaces nw_push_mult — per-spot wind dir scoring
-      rain_pen_mult: 20.0,
+      w_swell: 0.55, w_wind: 0.20, w_rain: 0.25,  // group shares: swell 26.5%, rain+wind balanced
+      push_mult: 14.0,
+      rain_pen_mult: 22.0,           // increased — rain_d1 is #2 feature overall
+      days_since_rain_bonus: 18.0,   // NEW — days_since_rain is #1 feature (6.4% importance)
       cur_north: 14.0, cur_south: 18.0, bight_mult: 22.0,
-      sst_warm: 12.0, sst_cold: -22.0,  // regression: sst_trend_7d importance > any rain window
+      sst_warm: 10.0, sst_cold: -20.0,  // SST group: 8.6% importance
       tide_mult: 1.0,
       shelter_mult: 0.10, river_mult: 0.15,
       hist_2_5: 0.60, hist_2_0: 0.75, hist_1_5: 0.88,
       seasonal_mult: 1.0,
+      swell_wave_p_bonus: 8.0,    // NEW — swell_wave_p_d0 is #3 feature; longer period = cleaner
+      wind_v_d2_mult: 10.0,       // NEW — wind_v_d2 r=-0.202; northerly 2d ago = cleaner water
 
-      // ── Per-spot type weight profiles (regression-derived) ───────────────
-      // Merged at score time: spot.spot_type picks the profile.
-      // Only keys that differ from the global values above need listing.
+      // ── Per-spot type weight profiles (XGBoost regression-derived) ──────
       SPOT_TYPE_WEIGHTS: {
       // Swell-dominated: open rock/reef, no significant river input.
-      // Regression: swell_h importance 0.094, rain 0.018, SST matters.
-      // Spots: motumahanga, metal_reef, fin_fuckers, opunake, kapiti spots
+      // XGBoost: swell group 26.5%, spot R²=0.39-0.45 (best performing)
       swell: {
-        w_swell: 0.60, w_wind: 0.18, w_rain: 0.22,
-        sst_warm: 14.0, sst_cold: -24.0,  // SST signal stronger at exposed spots
-        river_mult: 0.05,                  // minimal river influence
+        w_swell: 0.62, w_wind: 0.17, w_rain: 0.21,
+        sst_warm: 12.0, sst_cold: -22.0,
+        river_mult: 0.05,
+        days_since_rain_bonus: 20.0,  // faster recovery = bigger clean bonus
       },
-      // River/harbour-dominated: poor flushing, high rain/river sensitivity.
-      // Regression: rain correlation 0.41 (gauge_rain), river_impact high.
-      // Spots: nga_motu, patea_inshore
+      // River/harbour-dominated: poor flushing, high rain sensitivity.
+      // XGBoost: rain_d1 r=+0.28 all spots; river spots show longer recovery
       river: {
         w_swell: 0.35, w_wind: 0.15, w_rain: 0.50,
-        rain_pen_mult: 28.0,               // harder rain penalty
-        sst_warm: 6.0,  sst_cold: -10.0,  // SST less relevant in turbid harbour
-        river_mult: 0.25,                  // elevated river penalty
+        rain_pen_mult: 30.0,
+        sst_warm: 6.0,  sst_cold: -10.0,
+        river_mult: 0.25,
+        days_since_rain_bonus: 12.0,  // slower recovery — papa/harbour retention
       },
-      // Bight/sediment: southerly current drives suspended sediment, mid-range swell.
-      // Regression: patea_offshore R²=0.68 (lowest), bight_mult dominant.
-      // Spots: patea_offshore, patea_inshore (partial)
+      // Bight/sediment: southerly current + suspended sediment dominant.
+      // XGBoost: wind_v_d2 signal strong here (southerly bight upwelling)
       bight: {
         w_swell: 0.45, w_wind: 0.20, w_rain: 0.35,
         sst_warm: 8.0,  sst_cold: -18.0,
-        bight_mult: 28.0,                  // bight sediment signal amplified
-        cur_south: 22.0,                   // stronger southerly current penalty
+        bight_mult: 28.0,
+        cur_south: 22.0,
         river_mult: 0.20,
+        wind_v_d2_mult: 14.0,  // stronger southerly signal in bight
       },
       },  // end SPOT_TYPE_WEIGHTS
     },  // end W
 
-    // Seasonal bias per month — Sentinel-2 calibrated (2017-2026, 2,712 observations)
-    // Derived from median NTU per spot per month. Lower NTU month = positive delta.
+    // Seasonal bias per month — S2 recalibrated Mar 2026 (~3,000+ valid obs, 80% cloud threshold)
+    // Derived from median NTU per spot per month vs annual median.
     // Applied as: score += seasonal[month] * W.seasonal_mult
+    // Positive = cleaner than average (bonus), Negative = dirtier (penalty)
     spotSeasonal: {
       "Motumahanga (Saddleback Is.)":
-        {1:-4,2:+2,3:+5,4:+5,5:+5,6:+5,7:+3,8:+4,9:-2,10:-1,11:-9,12:-11},
+        {1:-7,2:-1,3:+5,4:+7,5:+6,6:+8,7:+1,8:+3,9:-8,10:-10,11:-15,12:-15},
       "Nga Motu — Inshore (Port Taranaki)":
-        {1:-3,2:+3,3:+7,4:+6,5:+6,6:+4,7:+2,8:+3,9:-3,10:-10,11:-8,12:-8},
+        {1:-3,2:+1,3:+8,4:+8,5:+8,6:+3,7:+3,8:-1,9:-11,10:-15,11:-15,12:-15},
       "Fin Fuckers (Cape Egmont / Warea)":
-        {1:+9,2:+12,3:+13,4:+6,5:+2,6:-7,7:-6,8:0,9:-10,10:-21,11:0,12:+2},
+        {1:+3,2:+6,3:+8,4:+1,5:0,6:+2,7:-10,8:0,9:-6,10:-6,11:-2,12:-2},
       "Opunake":
-        {1:+1,2:+8,3:+10,4:+9,5:-3,6:+6,7:-4,8:+4,9:-20,10:-10,11:-1,12:0},
+        {1:-2,2:+4,3:+4,4:+6,5:+1,6:+8,7:-4,8:+2,9:-5,10:-5,11:-1,12:-2},
       "Patea — Inshore":
-        {1:-1,2:+4,3:+4,4:+6,5:+2,6:0,7:-4,8:-4,9:-6,10:0,11:0,12:0},
+        {1:-2,2:+1,3:+1,4:+2,5:+1,6:-3,7:0,8:-8,9:-8,10:0,11:0,12:0},
       "Patea — Offshore Trap":
-        {1:-3,2:+1,3:+3,4:+4,5:+4,6:+4,7:+3,8:+3,9:+1,10:-2,11:-6,12:-12},
+        {1:-11,2:-2,3:+1,4:+8,5:+6,6:+7,7:+5,8:+3,9:-1,10:-8,11:-15,12:-15},
       "The Metal Reef":
-        {1:-1,2:+2,3:+3,4:+4,5:+3,6:+4,7:+3,8:+3,9:0,10:-4,11:-7,12:-10},
-      // Kapiti spots — no Sentinel-2 NTU data yet, keeping prior values
-      "Aeroplane Island": {1:+3,2:+4,3:+6,4:+6,5:+5,6:+4,7:+4,8:+3,9:+2,10:-3,11:-15,12:-19},
-      "Tokahaki":          {1:+3,2:+6,3:+7,4:+7,5:+8,6:+6,7:+5,8:+5,9:+5,10:-1,11:-13,12:-18},
+        {1:-2,2:-3,3:+5,4:+6,5:+3,6:+9,7:+8,8:+2,9:-10,10:-15,11:-15,12:-15},
+      "Aeroplane Island":
+        {1:-7,2:0,3:+2,4:+4,5:+5,6:+5,7:+4,8:0,9:0,10:-7,11:-12,12:-15},
+      "Tokahaki":
+        {1:-8,2:+5,3:+1,4:+4,5:+8,6:+5,7:+2,8:-1,9:-6,10:-15,11:-15,12:-3},
+      "Kapiti West":
+        {1:-8,2:-4,3:+4,4:+7,5:+7,6:+8,7:+6,8:+1,9:-1,10:-7,11:-15,12:-4},
     },
 
     // Seasonal chart data for UI (pipeline clear% by month)
@@ -257,7 +266,7 @@ const REGIONS = {
       { month:"Nov", clear:42, blueIdx:5 },
       { month:"Dec", clear:40, blueIdx:4 },
     ],
-    seasonalNote: "668 cloud-free MODIS observations · Motumahanga reference spot",
+    seasonalNote: "3,000+ Sentinel-2 observations · 12 spots · recalibrated Mar 2026",
 
     spots: [
       {
@@ -516,282 +525,62 @@ function dirName(deg) {
   return dirs[Math.round(deg / 22.5) % 16];
 }
 
-// ── Scoring functions ──────────────────────────────────────────────────────────
+// ── Scoring engine — IP protected via Supabase Edge Function ─────────────────
+// All scoring logic (weights, formulas, spot configs) lives server-side.
+// This stub sends cond + spot + W to the Edge Function and returns the result.
+// The app interface is identical — callers don't need to change.
 
-// Convert degrees to compass octant label
-function degToOctant(deg) {
-  const d = ((deg % 360) + 360) % 360;
-  const octants = ["N","NE","E","SE","S","SW","W","NW"];
-  return octants[Math.round(d / 45) % 8];
-}
+// Netlify ONNX scoring function — replaces Supabase score-full Edge Function
+// Falls back to legacy Supabase endpoint if Netlify function returns non-OK
+const SCORE_API        = "/.netlify/functions/score";
+const SCORE_API_LEGACY = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
+const SCORE_KEY        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
 
-// Directional exposure factor for a spot given swell direction (0–1)
-function dirExposureFactor(swellDir, spot) {
-  if (!spot?.dir_exposure || swellDir == null || swellDir === 0) {
-    return spot?.swell_exposure ?? 0.5;
-  }
-  const octant = degToOctant(swellDir);
-  return spot.dir_exposure[octant] ?? spot.swell_exposure ?? 0.5;
-}
+// In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
+const _scoreCache = new Map();
 
-// Period-depth penetration factor: how much does this period disturb the seabed?
-// Orbital motion depth ≈ period² × 0.12 metres
-// Returns 0–1: 1.0 = fully disturbing seabed, 0 = barely reaching depth
-function periodDepthFactor(period, depthM) {
-  if (!period || period <= 0 || !depthM) return 0.5;
-  const disturbanceDepth = period * period * 0.12;
-  if (disturbanceDepth >= depthM) return 1.0;          // fully disturbed
-  if (disturbanceDepth < depthM * 0.3) return 0.2;     // barely reaching
-  return 0.2 + 0.8 * (disturbanceDepth / depthM);      // linear between
-}
+async function scoreSpot(cond, spot, W) {
+  // Cache key: spot + date (for forecast) or current 15min bucket (for today)
+  // Must include date so 7-day forecast gets distinct scores per day
+  const dateKey = cond._forecastDate ?? Math.floor(Date.now() / 900000);
+  const key = `${spot.name}:${dateKey}`;
+  if (_scoreCache.has(key)) return _scoreCache.get(key);
 
-function swellScore(h, p, spot, swellDir) {
-  const dirFactor    = dirExposureFactor(swellDir, spot);
-  const depthFactor  = periodDepthFactor(p, spot?.depth_m ?? 10);
-  // Effective height — scale by direction and period-depth impact
-  // Long-period swell from an exposed direction is maximally penalising
-  const periodWeight = 0.4 + 0.6 * depthFactor;  // period matters more at depth
-  const effectiveH   = h * (0.3 + 0.7 * dirFactor) * periodWeight;
-
-  // Score based on effective height (same breakpoints, now direction/period adjusted)
-  let s = effectiveH < 0.4 ? 100
-        : effectiveH < 0.7 ? 90
-        : effectiveH < 1.0 ? 76
-        : effectiveH < 1.4 ? 58
-        : effectiveH < 1.8 ? 36
-        : effectiveH < 2.3 ? 16
-        : effectiveH < 3.0 ? 5
-        : 0;
-
-  // Extra penalty for highly exposed spots after swell history builds up
-  const exposure = spot?.swell_exposure ?? 0.5;
-  if (exposure >= 0.75) {
-    s = Math.max(0, s - exposure * (100 - s) * 0.45);
-  }
-  return Math.max(0, Math.round(s));
-}
-
-function windScore(spd, dir) {
-  let b = spd < 5 ? 100 : spd < 10 ? 88 : spd < 15 ? 68 : spd < 20 ? 45 : spd < 25 ? 25 : 10;
-  if (dir >= 60 && dir <= 150) b = Math.min(100, b * 1.15);
-  if (dir >= 200 && dir <= 270) b *= 0.80;
-  return b;
-}
-
-function rainDecay(mm, days, spot) {
-  const base = mm > 50 ? 60 : mm > 30 ? 45 : mm > 15 ? 25 : mm > 5 ? 12 : 0;
-  const pm = 0.4 + spot.papa_risk * 0.9;
-  const cr = 5.0 - spot.papa_risk * 2.0;
-  return Math.max(0, 100 - base * pm * Math.max(0, 1 - days / cr));
-}
-
-function plumeReachFactor(rainHistory) {
-  if (!rainHistory) return 0;
-  const halfLife = 4.0;
-  let weighted = 0;
-  rainHistory.forEach((mm, dayAgo) => {
-    weighted += mm * Math.pow(0.5, dayAgo / halfLife);
-  });
-  if (weighted <= 5)  return 0.0;
-  if (weighted >= 30) return 1.0;
-  return (weighted - 5) / 25;
-}
-
-function rainPenalty14(rainHistory, papaRisk) {
-  const halfLife = 2.0 + papaRisk * 10.0;
-  const penaltyMult = 1.2 + papaRisk * 2.0;
-  let weightedRain = 0;
-  rainHistory.forEach((mm, dayAgo) => {
-    weightedRain += mm * Math.pow(0.5, dayAgo / halfLife);
-  });
-  const penalty = Math.min(95, weightedRain * penaltyMult);
-  return Math.max(0, 100 - penalty);
-}
-
-function swellHistoryMultiplier(swellHistory) {
-  const halfLife = 2.5;
-  let weightedSwell = 0;
-  swellHistory.forEach((h, dayAgo) => {
-    weightedSwell += h * Math.pow(0.5, dayAgo / halfLife);
-  });
-  const avg = weightedSwell / swellHistory.length;
-  if (avg > 2.5) return W.hist_2_5;
-  if (avg > 2.0) return W.hist_2_0;
-  if (avg > 1.5) return W.hist_1_5;
-  return 1.0;
-}
-
-function recoveryBonus(rainHistory, swellHistory) {
-  let cleanDays = 0;
-  const maxCheck = Math.min(rainHistory.length, swellHistory.length, 14);
-  for (let d = 0; d < maxCheck; d++) {
-    if (rainHistory[d] < 1.5 && swellHistory[d] < 1.2) cleanDays++;
-    else break;
-  }
-  if (cleanDays >= 7) return 12;
-  if (cleanDays >= 5) return 8;
-  if (cleanDays >= 3) return 4;
-  return 0;
-}
-
-// Merge global W with spot-type profile overrides
-// W.SPOT_TYPE_WEIGHTS is defined in each region's W block (Taranaki has it; Kapiti falls back to global)
-function mergeSpotWeights(W, spot) {
-  if (!W.SPOT_TYPE_WEIGHTS || !spot.spot_type) return W;
-  const profile = W.SPOT_TYPE_WEIGHTS[spot.spot_type];
-  if (!profile) return W;
-  return { ...W, ...profile };
-}
-
-function scoreSpot(cond, spot, W) {
-  W = mergeSpotWeights(W, spot);
-  const s  = swellScore(cond.swell_h, cond.swell_p, spot, cond.swell_dir);
-  const wn = windScore(cond.wind_spd, cond.wind_dir);
-
-  let papaRiskEffective = spot.papa_risk;
-  let riverImpactEffective = spot.river_impact;
-
-  let plumeReach = 0;
-  if (spot.plume_reach && cond.rainHistory) {
-    plumeReach = plumeReachFactor(cond.rainHistory);
-    if (plumeReach > 0) {
-      const blendStrength = plumeReach * spot.plume_reach;
-      papaRiskEffective    = spot.papa_risk    + blendStrength * (0.85 - spot.papa_risk);
-      riverImpactEffective = spot.river_impact + blendStrength * (0.85 - spot.river_impact);
-    }
+  // Try Netlify ONNX function first
+  try {
+    const res = await fetch(SCORE_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cond, spot, W }),
+    });
+    if (!res.ok) throw new Error(`Netlify score ${res.status}`);
+    const result = await res.json();
+    _scoreCache.set(key, result);
+    return result;
+  } catch (netlifyErr) {
+    console.warn("[scoreSpot] Netlify function unavailable, falling back to Supabase:", netlifyErr.message);
   }
 
-  const r = cond.rainHistory
-    ? rainPenalty14(cond.rainHistory, papaRiskEffective)
-    : rainDecay(cond.rain_48h, cond.days_since_rain, spot);
-
-  const hp = cond.swellHistory
-    ? swellHistoryMultiplier(cond.swellHistory)
-    : (cond.swell_hist_72h > 2.5 ? W.hist_2_5 : cond.swell_hist_72h > 2.0 ? W.hist_2_0 : cond.swell_hist_72h > 1.5 ? W.hist_1_5 : 1.0);
-
-  const base = (s * W.w_swell + wn * W.w_wind + r * W.w_rain) * hp;
-
-  const recovery = (cond.rainHistory && cond.swellHistory)
-    ? recoveryBonus(cond.rainHistory, cond.swellHistory) * (1 - plumeReach * 0.8)
-    : 0;
-
-  // Pipeline-calibrated per-spot wind direction scoring (replaces global NW push)
-  let nw = 0;
-  if (spot.best_wind_dirs && cond.wind_spd > 3) {
-    const bestStr = spot.best_wind_dirs.reduce((max, dir) => {
-      const diff = Math.abs(((cond.wind_dir - dir + 360) % 360));
-      const angularMatch = Math.max(0, 1 - Math.min(diff, 360 - diff) / 60);
-      return Math.max(max, angularMatch);
-    }, 0);
-    const worstStr = (spot.worst_wind_dirs || []).reduce((max, dir) => {
-      const diff = Math.abs(((cond.wind_dir - dir + 360) % 360));
-      const angularMatch = Math.max(0, 1 - Math.min(diff, 360 - diff) / 60);
-      return Math.max(max, angularMatch);
-    }, 0);
-    const windSpeedFactor = Math.min(cond.wind_spd / 15, 1);
-    const push = bestStr * (spot.wind_push ?? 0.5) * windSpeedFactor * W.push_mult;
-    const rpen = cond.rain_48h > 10
-      ? bestStr * (spot.nw_rain_penalty ?? 0.3) * (papaRiskEffective ?? 0.3) * W.rain_pen_mult
-      : 0;
-    const drag = worstStr * windSpeedFactor * (spot.wind_push ?? 0.5) * W.push_mult * 0.6;
-    nw = push - rpen - drag;
+  // Fallback: legacy Supabase Edge Function
+  try {
+    const res = await fetch(SCORE_API_LEGACY, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + SCORE_KEY,
+      },
+      body: JSON.stringify({ cond, spot, W }),
+    });
+    if (!res.ok) throw new Error(`Supabase score ${res.status}`);
+    const result = await res.json();
+    _scoreCache.set(key, result);
+    return result;
+  } catch (err) {
+    console.error("[scoreSpot] Both score APIs failed:", err.message);
+    return { score: 50, plumeReach: 0, factors: {} };
   }
-
-  const cv = cond.current_vel, cd = cond.current_dir;
-  const spd = Math.min(cv / 0.5, 1.0);
-  const ss = Math.max(0, 1 - Math.abs(((cd - 180 + 360) % 360)) / 50);
-  const ns = Math.max(0, 1 - Math.abs(((cd + 360) % 360)) / 60);
-  const cur = ns * spd * W.cur_north - ss * spd * W.cur_south
-              - ss * spd * (spot.southerly_bight ?? 0) * W.bight_mult;
-
-  const sst = cond.sst;
-  const sstAdj = sst > 18 ? W.sst_warm : sst > 17 ? W.sst_warm * 0.5 : sst > 16 ? 0
-               : sst > 15 ? W.sst_cold * 0.5 : sst > 14 ? W.sst_cold : W.sst_cold * 1.5;
-
-  const tl = cond.tide_h;
-  const tideSens = spot.tide_sensitive ?? 0.5;
-  const tideBase = tl > 0.8 ? 18 : tl > 0.3 ? 10 : tl > -0.3 ? 0 : tl > -0.8 ? -12 : -20;
-  const tideAdj = tideBase * tideSens * W.tide_mult;
-
-  const shelter = spot.shelter * Math.max(0, 100 - s) * W.shelter_mult;
-  const river   = -riverImpactEffective * (100 - r) * W.river_mult;
-
-  // ── Live river turbidity adjustment (TRC gauge data) ─────────────────────
-  // When we have real FNU readings from TRC gauges, use them to amplify or
-  // reduce the rain-based river penalty. High FNU (murky river) = extra penalty.
-  // Low FNU (clear river despite rain) = small relief on the river component.
-  let riverFNUAdj = 0;
-  if (cond.riverTurbScore != null && spot.river_impact > 0.1) {
-    const rts = cond.riverTurbScore; // 0–100 normalised turbidity score
-    const sensitivity = spot.river_impact; // more sensitive spots feel it more
-    if (rts > 60) {
-      // Murky river: add extra penalty proportional to turbidity and river_impact
-      riverFNUAdj = -sensitivity * (rts - 40) * 0.25;
-    } else if (rts < 15) {
-      // Surprisingly clear river: slight relief (river isn't the problem right now)
-      riverFNUAdj = sensitivity * (15 - rts) * 0.12;
-    }
-    // Cap: don't let river gauge swing scores too wildly
-    riverFNUAdj = Math.max(-20, Math.min(8, riverFNUAdj));
-  }
-
-  // ── CHANGE 1: Satellite turbidity adjustment ──────────────────────────────
-  // cond.satTurbidity: 0–100 index from MODIS TrueColor pixel sampling
-  // High satellite turbidity directly suppresses the rain score component,
-  // providing ground-truth correction when satellite data is fresh (< 2 days old).
-  let satAdj = 0;
-  if (cond.satTurbidity != null && cond.satTurbidityAge != null) {
-    // Weight satellite confidence by age: full weight at 0 days, zero at 3+ days
-    const satConfidence = Math.max(0, 1 - cond.satTurbidityAge / 3);
-    if (satConfidence > 0) {
-      // Map turbidity index (0–100) to a rain-equivalent penalty (0–95)
-      // High turbidity (>60) overrides rain model with strong penalty
-      // Low turbidity (<20) provides a small clarity bonus
-      const satPenalty = cond.satTurbidity > 60
-        ? Math.min(95, cond.satTurbidity * 1.2) * satConfidence
-        : cond.satTurbidity > 20
-        ? cond.satTurbidity * 0.6 * satConfidence
-        : 0;
-      const satBonus = cond.satTurbidity < 20
-        ? (20 - cond.satTurbidity) * 0.3 * satConfidence
-        : 0;
-      satAdj = satBonus - satPenalty;
-    }
-  }
-
-  // ── Webcam turbidity adjustment ───────────────────────────────────────────
-  // cond.webcamTurbidity: 0–100 from Primo live camera pixel sampling
-  // Fresh live reads decay over 2 hours. Stored morning reads decay over 12 hours
-  // (captured at peak solar reliability, valid as a "today's baseline").
-  // Also modulated by solar angle — morning light (east sun) dramatically
-  // improves colour contrast and turbidity visibility in west-facing cameras.
-  // Webcam and satellite adjustments are complementary — both can apply.
-  let webcamAdj = 0;
-  if (cond.webcamTurbidity != null && cond.webcamAgeMinutes != null) {
-    const isCached = cond.webcamSource === "supabase";
-    const decayWindow = isCached ? 720 : 120; // 12h for morning cache, 2h for live
-    const ageFade = Math.max(0, 1 - cond.webcamAgeMinutes / decayWindow);
-    const solar = cond.webcamSolarConfidence ?? 0.5; // default moderate if not set
-    const webcamConfidence = ageFade * solar;
-    if (webcamConfidence > 0) {
-      const wt = cond.webcamTurbidity;
-      const penalty = wt > 60
-        ? Math.min(80, wt * 1.0) * webcamConfidence
-        : wt > 25
-        ? wt * 0.5 * webcamConfidence
-        : 0;
-      const bonus = wt < 20 ? (20 - wt) * 0.25 * webcamConfidence : 0;
-      webcamAdj = bonus - penalty;
-    }
-  }
-
-  const total = base + nw + cur + sstAdj + tideAdj + shelter + river + riverFNUAdj + recovery + satAdj + webcamAdj;
-  return {
-    score: Math.max(0, Math.min(100, Math.round(total))),
-    plumeReach: Math.round(plumeReach * 100),
-    factors: { swell: s, wind: wn, rain: r, nw, current: cur, sst: sstAdj, tide: tideAdj, recovery, satellite: satAdj, webcam: webcamAdj, riverGauge: riverFNUAdj },
-  };
 }
+
 
 // ── Display helpers ───────────────────────────────────────────────────────────
 
@@ -1269,7 +1058,32 @@ function condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist) {
 
 // ── Forecast builder ──────────────────────────────────────────────────────────
 
-function getDailyScores(marine, weather, spot, W) {
+// dailyAvgHistory — builds a daily-average array anchored to a reference date string.
+// Used to supply 22-day history windows to the Netlify ONNX scoring function.
+// times: ISO string array. vals: numeric array (same length). days: how many days back.
+// Returns array of length `days`: index 0 = today (or most recent), index N = N days ago.
+// Missing days fill with 0.
+function dailyAvgHistory(times, vals, days = 22) {
+  if (!times || !vals || times.length === 0) return Array(days).fill(0);
+  const todayMs = Date.now();
+  const byDay = {};
+  const counts = {};
+  times.forEach((t, i) => {
+    const hrs = (todayMs - new Date(t).getTime()) / 3600000;
+    if (hrs < 0 || hrs > days * 24) return;
+    const dayAgo = Math.floor(hrs / 24);
+    const v = typeof vals[i] === "number" && !isNaN(vals[i]) ? vals[i] : 0;
+    byDay[dayAgo] = (byDay[dayAgo] ?? 0) + v;
+    counts[dayAgo] = (counts[dayAgo] ?? 0) + 1;
+  });
+  const result = [];
+  for (let d = 0; d < days; d++) {
+    result.push(counts[d] ? byDay[d] / counts[d] : 0);
+  }
+  return result;
+}
+
+async function getDailyScores(marine, weather, spot, W) {
   const mTimes = marine?.hourly?.time ?? [];
   const wTimes = weather?.hourly?.time ?? [];
 
@@ -1305,20 +1119,62 @@ function getDailyScores(marine, weather, spot, W) {
   const allDates = [...new Set([...Object.keys(mByDate), ...Object.keys(wByDate)])].sort();
   const todayStr = new Date().toLocaleDateString("en-CA");
 
-  const dailyRainMap = {};
+  // Build full daily maps for all variables — used for legacy cond fields
+  // and to construct per-day shifted hist22 arrays for the ONNX feature builder.
+  const dailyRainMap     = {};
   const dailySwellMaxMap = {};
   const dailySwellAvgMap = {};
+  const dailySwellPMap   = {};
+  const dailySwellDirMap = {};
+  const dailySwellWHMap  = {};
+  const dailySwellWPMap  = {};
+  const dailyWindSpdMap  = {};
+  const dailyWindDirMap  = {};
+  const dailySSTMap      = {};
+
   allDates.forEach(d => {
     const w = wByDate[d];
-    dailyRainMap[d] = w ? sum(w.precip) : 0;
     const m = mByDate[d];
+    dailyRainMap[d]     = w ? sum(w.precip) : 0;
     dailySwellMaxMap[d] = m ? Math.max(...m.waveH, 0) : 0;
     dailySwellAvgMap[d] = m ? avg(m.waveH) : 0;
+    dailySwellPMap[d]   = m ? avg(m.waveP) : 0;
+    dailySwellDirMap[d] = m ? avg(m.waveDir) : 0;
+    dailySwellWHMap[d]  = m ? avg(m.swellH) : 0;
+    dailySwellWPMap[d]  = m ? avg(m.swellP) : 0;
+    dailyWindSpdMap[d]  = w ? avg(w.wind) : 0;
+    dailyWindDirMap[d]  = w ? avg(w.windDir) : 0;
+    dailySSTMap[d]      = m ? avg(m.sst) : 16;
   });
+
+  // Build a hist22 anchored to a specific forecast date.
+  // Index 0 = the forecast date itself, index N = N days before that.
+  // This ensures each forecast day sees different lagged conditions.
+  function buildHist22ForDate(anchorDateIdx) {
+    const build = (mapObj, fallback = 0) => {
+      const arr = [];
+      for (let i = 0; i < 22; i++) {
+        const idx = anchorDateIdx - i;
+        arr.push(idx >= 0 ? (mapObj[allDates[idx]] ?? fallback) : fallback);
+      }
+      return arr;
+    };
+    return {
+      swell_h:      build(dailySwellAvgMap),
+      swell_p:      build(dailySwellPMap),
+      swell_dir:    build(dailySwellDirMap),
+      swell_wave_h: build(dailySwellWHMap),
+      swell_wave_p: build(dailySwellWPMap),
+      wind_spd:     build(dailyWindSpdMap),
+      wind_dir:     build(dailyWindDirMap),
+      sst:          build(dailySSTMap, 16),
+      rain:         build(dailyRainMap),
+    };
+  }
 
   const futureDates = allDates.filter(d => d >= todayStr).slice(0, 7);
 
-  return futureDates.map((date, dayIdx) => {
+  return Promise.all(futureDates.map(async (date, dayIdx) => {
     const m = mByDate[date];
     const w = wByDate[date] ?? { wind: [0], windDir: [270], precip: [0] };
 
@@ -1372,10 +1228,35 @@ function getDailyScores(marine, weather, spot, W) {
       tide_h:          0,
       rainHistory,
       swellHistory,
+      hist22: buildHist22ForDate(dateIdx),  // per-day shifted history for ONNX
+      _forecastDate:   date,  // ensures cache key is unique per forecast day
     };
-    const { score, factors } = scoreSpot(cond, spot, W);
+    const { score, factors } = await scoreSpot(cond, spot, W);
     return { date, score, factors, cond };
-  });
+  }));
+}
+
+// ── Plume reach factor — how much rain has penetrated to Motumahanga ────────────
+// rainHistory[0] = today, [1] = yesterday, [2] = 2 days ago, etc.
+// Returns 0.0 (no plume) → 1.0 (full plume reaching offshore)
+// Based on Taranaki field knowledge: >50mm in 3 days = plume reaches Motumahanga
+function plumeReachFactor(rainHistory) {
+  if (!rainHistory || rainHistory.length === 0) return 0;
+  const rain3d = rainHistory.slice(0, 3).reduce((a, b) => a + b, 0);
+  const rain7d = rainHistory.slice(0, 7).reduce((a, b) => a + b, 0);
+  // Weight recent rain heavily — plume dissipates over ~3 days
+  const rawFactor = Math.min(1.0, (rain3d / 50) * 0.7 + (rain7d / 120) * 0.3);
+  return Math.max(0, rawFactor);
+}
+
+// ── Recovery bonus — how clean has it been recently ──────────────────────────
+// Returns 0 (recent dirty) → 10 (extended clean spell)
+// Used to generate "water clearing" advice messages
+function recoveryBonus(rainHistory, swellHistory) {
+  if (!rainHistory || !swellHistory) return 0;
+  const cleanRainDays = rainHistory.slice(0, 7).filter(mm => mm < 3).length;
+  const calmSwellDays = swellHistory.slice(0, 5).filter(h => h < 1.5).length;
+  return cleanRainDays + calmSwellDays;
 }
 
 // ── Advice generator ──────────────────────────────────────────────────────────
@@ -1614,7 +1495,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   useEffect(() => { webcamRef.current = webcamData; }, [webcamData]);
   useEffect(() => { riverRef.current  = riverData;  }, [riverData]);
 
-  const computeSpotResult = useCallback((spot, marine, weather, rtofs, entries) => {
+  const computeSpotResult = useCallback(async (spot, marine, weather, rtofs, entries) => {
     const mTimes = marine.hourly?.time ?? [];
     const wTimes = weather.hourly?.time ?? [];
     const mIdx = nowIdx(mTimes);
@@ -1625,6 +1506,19 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     const hist = maxSwellPast(mTimes, marine.hourly?.wave_height ?? [], 72);
     const rainHist  = dailyRainHistory(wTimes, weather.hourly?.precipitation ?? [], 14);
     const swellHist = dailySwellHistory(mTimes, marine.hourly?.wave_height ?? [], 7);
+
+    // 22-day history arrays for ONNX feature builder
+    const hist22 = {
+      swell_h:      dailyAvgHistory(mTimes, marine.hourly?.wave_height ?? [], 22),
+      swell_p:      dailyAvgHistory(mTimes, marine.hourly?.wave_period ?? [], 22),
+      swell_dir:    dailyAvgHistory(mTimes, marine.hourly?.wave_direction ?? [], 22),
+      swell_wave_h: dailyAvgHistory(mTimes, marine.hourly?.swell_wave_height ?? [], 22),
+      swell_wave_p: dailyAvgHistory(mTimes, marine.hourly?.swell_wave_period ?? [], 22),
+      wind_spd:     dailyAvgHistory(wTimes, weather.hourly?.wind_speed_10m ?? [], 22),
+      wind_dir:     dailyAvgHistory(wTimes, weather.hourly?.wind_direction_10m ?? [], 22),
+      sst:          dailyAvgHistory(mTimes, marine.hourly?.sea_surface_temperature ?? [], 22),
+      rain:         dailyAvgHistory(wTimes, weather.hourly?.precipitation ?? [], 22),
+    };
 
     const condBase = condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist);
 
@@ -1673,14 +1567,15 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
       ...riverOverride,
       rainHistory: rainHist,
       swellHistory: swellHist,
+      hist22,           // 22-day daily-avg arrays for ONNX feature builder
     };
 
-    const { score: rawScore, factors, plumeReach } = scoreSpot(cond, spot, W);
+    const { score: rawScore, factors, plumeReach } = await scoreSpot(cond, spot, W);
 
     const biasMult = spotBiasMultiplier(spot.name, entries || []);
     let score = applyBias(rawScore, biasMult);
 
-    const forecast = getDailyScores(marine, weather, spot, W);
+    const forecast = await getDailyScores(marine, weather, spot, W);
 
     return {
       cond, score, rawScore, factors, forecast, biasMult,
@@ -1692,23 +1587,22 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
 
   const rawApiRef = useRef({});
 
-  const rescoreAll = useCallback(() => {
+  const rescoreAll = useCallback(async () => {
     const raw = rawApiRef.current;
     if (Object.keys(raw).length === 0) return;
 
-    const rtofs  = currentRef.current;
+    const rtofs = currentRef.current;
 
-    const updated = {};
-    for (const spot of SPOTS) {
+    await Promise.all(SPOTS.map(async (spot) => {
       const api = raw[spot.name];
-      if (!api) continue;
+      if (!api) return;
       try {
-        updated[spot.name] = computeSpotResult(spot, api.marine, api.weather, rtofs, logEntries);
-      } catch(e) {}
-    }
-    if (Object.keys(updated).length > 0) {
-      setSpotDataMap(prev => ({ ...prev, ...updated }));
-    }
+        const result = await computeSpotResult(spot, api.marine, api.weather, rtofs, logEntries);
+        setSpotDataMap(prev => ({ ...prev, [spot.name]: result }));
+      } catch(e) {
+        console.error(`[rescoreAll] ${spot.name}:`, e.message);
+      }
+    }));
   }, [logEntries, computeSpotResult]);
 
   // Rescore when ocean data arrives (RTOFS)
@@ -1979,7 +1873,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
           if (!cancelled) {
             rawApiRef.current[spot.name] = { marine, weather };
 
-            const result = computeSpotResult(
+            const result = await computeSpotResult(
               spot, marine, weather,
               currentRef.current,
               logEntries,
@@ -2303,6 +2197,18 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
   const score = data?.score;
   const color = score != null ? scoreToColor(score) : "#607d8b";
 
+  // Guard: don't render conditions until data and cond are ready
+  if (!data?.cond) {
+    return (
+      <div className="spot-card" style={{ "--accent": color }}>
+        <div className="spot-header">
+          <span className="spot-name">{spot.name}</span>
+          <span className="spot-score" style={{ color }}>—</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="spot-card" style={{ "--accent": color }}>
       <div className="spot-header" onClick={() => data && setExpanded(e => !e)}
@@ -2451,7 +2357,7 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
                 </div>
               </div>
             ))}
-          </div>
+          </div>}
 
           {/* Factor breakdown — hidden from UI, scoring runs in background
           <div className="factors-grid">
