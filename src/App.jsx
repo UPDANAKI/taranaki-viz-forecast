@@ -179,12 +179,12 @@ const REGIONS = {
     // Key findings: rain peaks at d1 (yesterday), days_since_rain is #1 predictor,
     // wind_v_d2 (northerly 2 days prior) r=-0.202 with turbidity
     W: {
-      w_swell: 0.55, w_wind: 0.20, w_rain: 0.25,  // group shares: swell 26.5%, rain+wind balanced
+      w_swell: 0.45, w_wind: 0.30, w_rain: 0.25,  // retrain 26 Mar 2026: swell 31.4%, wind 33.9% — balanced
       push_mult: 14.0,
       rain_pen_mult: 22.0,           // increased — rain_d1 is #2 feature overall
       days_since_rain_bonus: 18.0,   // NEW — days_since_rain is #1 feature (6.4% importance)
       cur_north: 14.0, cur_south: 18.0, bight_mult: 22.0,
-      sst_warm: 10.0, sst_cold: -20.0,  // SST group: 8.6% importance
+      sst_warm: 12.0, sst_cold: -20.0,  // retrain: SST group 12.2% importance
       tide_mult: 1.0,
       shelter_mult: 0.10, river_mult: 0.15,
       hist_2_5: 0.60, hist_2_0: 0.75, hist_1_5: 0.88,
@@ -228,8 +228,9 @@ const REGIONS = {
     // Derived from median NTU per spot per month vs annual median.
     // Applied as: score += seasonal[month] * W.seasonal_mult
     // Positive = cleaner than average (bonus), Negative = dirtier (penalty)
-    // spotSeasonal recalibrated 23 Mar 2026
-    // Source: 4,095 S2 SWIR observations (2017-2026), merged with full weather feature matrix
+    // spotSeasonal recalibrated 26 Mar 2026
+    // Source: 3,635 S2 SWIR obs (2017-2026) merged with weather features, XGBoost retrain
+    // NTU median per month per spot -> delta vs annual median. Scale: 5 NTU = 10 score pts.
     spotSeasonal: {
       "Motumahanga (Saddleback Is.)":
         {1:-15,2:-15,3:+15,4:+15,5:+15,6:+15,7:+13,8:+15,9:-13,10:-15,11:-15,12:-15},
@@ -243,13 +244,13 @@ const REGIONS = {
         {1:-15,2:-15,3:-14,4:+10,5:+10,6:+4,7:+5,8:0,9:0,10:0,11:0,12:0},
       "Patea — Offshore Trap":
         {1:-15,2:-15,3:-15,4:-11,5:-7,6:+1,7:+7,8:+6,9:+4,10:+3,11:0,12:0},
-      "The Metal Reef":
+      "Boarfish Rock":
         {1:-15,2:-6,3:+6,4:+13,5:+10,6:+15,7:+14,8:+7,9:-12,10:-15,11:-15,12:-15},
       "Aeroplane Island":
         {1:-15,2:-15,3:-2,4:+4,5:+12,6:+2,7:+12,8:+10,9:+2,10:-15,11:-15,12:-15},
-      "Tokahaki":
+      "Tokahaki (North Tip)":
         {1:-15,2:-15,3:+4,4:+5,5:+5,6:0,7:+10,8:+7,9:0,10:-15,11:-15,12:-15},
-      "Kapiti West":
+      "Kapiti West Face":
         {1:-15,2:-15,3:+6,4:+9,5:+13,6:+13,7:+15,8:+8,9:-6,10:-15,11:-15,12:-15},
     },
 
@@ -274,10 +275,15 @@ const REGIONS = {
       {
         name: "Motumahanga (Saddleback Is.)",
         spot_type: "swell",
+
+        // Per-spot W (calibrate_per_spot.py, n=312, R2=0.17)
+        // Lags: swell:swell_wave_h_d10(+0.26) | wind:wind_u_d1(+0.33) | rain:rain_d2(+0.20)
+        W: { w_swell:0.4, w_wind:0.3, w_rain:0.3,
+             sst_warm:14.0, sst_cold:-20.0, river_mult:0.15 },
         lat: -39.045543, lon: 174.014640,
         marine_lat: -39.10, marine_lon: 173.90,
         weather_lat: -39.055, weather_lon: 174.02,
-        shelter: 0.6,  river_impact: 0.2,  papa_risk: 0.2,  swell_exposure: 0.15,
+        shelter: 0.6,  river_impact: 0.1,  papa_risk: 0.2,  swell_exposure: 0.15,  // river corr=0.15
         // Directional exposure (0=none, 1=full). Faces NW across open Tasman.
         // Island provides shelter from direct W/SW; deepest water ~10m, rocky.
         dir_exposure: { N:0.3, NE:0.2, E:0.1, SE:0.1, S:0.2, SW:0.4, W:0.5, NW:0.6 },
@@ -295,6 +301,11 @@ const REGIONS = {
       {
         name: "Nga Motu — Inshore (Port Taranaki)",
         spot_type: "river",
+
+        // Per-spot W (calibrate_per_spot.py, n=310, R2=0.01)
+        // Lags: swell:swell_h_d14(-0.25) | wind:wind_u_d1(+0.37) | rain:rain_d16(-0.21)
+        W: { w_swell:0.4, w_wind:0.3, w_rain:0.3,
+             sst_warm:14.0, sst_cold:-20.0, river_mult:0.15 },
         lat: -39.053292, lon: 174.041905,
         marine_lat: -39.10, marine_lon: 173.90,
         weather_lat: -39.06, weather_lon: 174.06,
@@ -314,6 +325,11 @@ const REGIONS = {
       {
         name: "Fin Fuckers (Cape Egmont / Warea)",
         spot_type: "swell",
+
+        // Per-spot W (calibrate_per_spot.py, n=244, R2=0.06)
+        // Lags: swell:swell_wave_h_d10(-0.34) | wind:wind_u_d0(+0.46) | rain:rain_d2(+0.28)
+        W: { w_swell:0.1, w_wind:0.56, w_rain:0.34,
+             sst_warm:14.0, sst_cold:-20.0, river_mult:0.15 },
         lat: -39.262931, lon: 173.753192,
         marine_lat: -39.30, marine_lon: 173.65,
         weather_lat: -39.27, weather_lon: 173.76,
@@ -321,7 +337,7 @@ const REGIONS = {
         // Landmark: replica lighthouse 1 & 2 at Warea Boat Club (Bayly Rd).
         // West-facing exposure. Benefits from N/NE wind (offshore). Open to SW swell.
         // No significant rivers nearby — rain effect mainly via direct runoff/papa.
-        shelter: 0.25, river_impact: 0.10, papa_risk: 0.35, swell_exposure: 0.55,
+        shelter: 0.25, river_impact: 0.12, papa_risk: 0.35, swell_exposure: 0.55,  // river corr=0.24
         // West-facing cape — maximum W/SW/NW exposure, sheltered from E/SE
         dir_exposure: { N:0.4, NE:0.3, E:0.1, SE:0.1, S:0.5, SW:0.9, W:1.0, NW:0.8 },
         depth_m: 12,
@@ -337,6 +353,11 @@ const REGIONS = {
       {
         name: "Opunake",
         spot_type: "swell",
+
+        // Per-spot W (calibrate_per_spot.py, n=304, R2=0.16)
+        // Lags: swell:swell_h_d0(+0.39) | wind:wind_u_d0(+0.40) | rain:rain_d2(+0.23)
+        W: { w_swell:0.35, w_wind:0.42, w_rain:0.23,
+             sst_warm:12.8, sst_cold:-20.0, river_mult:0.15 },
         lat: -39.455188, lon: 173.837393,
         marine_lat: -39.50, marine_lon: 173.70,
         weather_lat: -39.45, weather_lon: 173.86,
@@ -356,6 +377,11 @@ const REGIONS = {
       {
         name: "Patea — Inshore",
         spot_type: "river",
+
+        // Per-spot W (calibrate_per_spot.py, n=283, R2=0.07)
+        // Lags: swell:swell_wave_h_d2(-0.37) | wind:wind_v_d4(-0.24) | rain:rain_d8(+0.19)
+        W: { w_swell:0.1, w_wind:0.44, w_rain:0.46,
+             sst_warm:6.0, sst_cold:-10.0, river_mult:0.15 },
         lat: -39.781507, lon: 174.480589,
         marine_lat: -39.80, marine_lon: 174.35,
         weather_lat: -39.78, weather_lon: 174.50,
@@ -374,6 +400,11 @@ const REGIONS = {
       {
         name: "Patea — Offshore Trap",
         spot_type: "bight",
+
+        // Per-spot W (calibrate_per_spot.py, n=469, R2=0.06)
+        // Lags: swell:swell_wave_h_d18(+0.30) | wind:wind_v_d2(-0.21) | rain:rain_d19(-0.14)
+        W: { w_swell:0.1, w_wind:0.43, w_rain:0.47,
+             sst_warm:6.0, sst_cold:-10.0, river_mult:0.15 },
         lat: -39.866933, lon: 174.548300,
         marine_lat: -39.90, marine_lon: 174.45,
         weather_lat: -39.85, weather_lon: 174.55,
@@ -391,12 +422,17 @@ const REGIONS = {
         river: false,
       },
       {
-        name: "The Metal Reef",
+        name: "Boarfish Rock",
         spot_type: "swell",
+
+        // Per-spot W (calibrate_per_spot.py, n=312, R2=0.12)
+        // Lags: swell:swell_h_d18(-0.20) | wind:wind_u_d1(+0.36) | rain:rain_d0(+0.19)
+        W: { w_swell:0.25, w_wind:0.38, w_rain:0.37,
+             sst_warm:6.0, sst_cold:-10.0, river_mult:0.2 },
         lat: -38.911833, lon: 174.271650,
         marine_lat: -38.95, marine_lon: 174.20,
         weather_lat: -38.93, weather_lon: 174.28,
-        shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,
+        shelter: 0.15,  river_impact: 0.55, papa_risk: 0.60, swell_exposure: 0.15,  // river corr=0.45
         // Pohokura platform — faces NW, partially sheltered by headland from S/SW
         dir_exposure: { N:0.3, NE:0.2, E:0.2, SE:0.3, S:0.4, SW:0.5, W:0.7, NW:0.8 },
         depth_m: 18,
@@ -429,11 +465,11 @@ const REGIONS = {
     footer: "Kāpiti Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Supabase · Built for Kāpiti divers 🐟",
 
     W: {
-      w_swell: 0.50, w_wind: 0.20, w_rain: 0.30,  // regression: same swell dominance as Taranaki
+      w_swell: 0.30, w_wind: 0.40, w_rain: 0.30,  // retrain: swell minimal at Kapiti (no papa), wind dominant
       push_mult: 16.0,
       rain_pen_mult: 14.0,
       cur_north: 12.0, cur_south: 10.0, bight_mult: 8.0,
-      sst_warm: 6.0, sst_cold: -12.0,
+      sst_warm: 9.0, sst_cold: -12.0,  // retrain: SST 12.2% importance
       tide_mult: 1.2,
       shelter_mult: 0.08, river_mult: 0.18,
       hist_2_5: 0.55, hist_2_0: 0.70, hist_1_5: 0.85,
@@ -467,10 +503,15 @@ const REGIONS = {
       {
         name: "Aeroplane Island",
         spot_type: "swell",
+
+        // Per-spot W (calibrate_per_spot.py, n=520, R2=0.09)
+        // Lags: swell:swell_wave_h_d2(+0.32) | wind:wind_u_d3(-0.11) | rain:rain_d14(-0.13)
+        W: { w_swell:0.1, w_wind:0.44, w_rain:0.46,
+             sst_warm:14.0, sst_cold:-20.0, river_mult:0.18 },
         lat: -40.882084, lon: 174.927163,
         marine_lat: -40.860, marine_lon: 174.960,
         sat_lat: -40.868, sat_lon: 174.910,
-        shelter: 0.3, river_impact: 0.3, papa_risk: 0.0, swell_exposure: 0.35,
+        shelter: 0.3, river_impact: 0.3, papa_risk: 0.1, swell_exposure: 0.35,  // MODIS: rain sensitivity confirmed
         dir_exposure: { N:0.3, NE:0.2, E:0.1, SE:0.2, S:0.4, SW:0.6, W:0.8, NW:0.7 },
         depth_m: 12,
         best_wind_dirs: [0, 45, 315],    // N, NE, NW
@@ -484,6 +525,11 @@ const REGIONS = {
       {
         name: "Tokahaki (North Tip)",
         spot_type: "swell",
+
+        // Per-spot W (calibrate_per_spot.py, n=546, R2=0.16)
+        // Lags: swell:swell_wave_h_d8(+0.46) | wind:wind_v_d19(-0.14) | rain:rain_d1(+0.07)
+        W: { w_swell:0.1, w_wind:0.37, w_rain:0.53,
+             sst_warm:14.0, sst_cold:-20.0, river_mult:0.18 },
         lat: -40.819471, lon: 174.946638,
         marine_lat: -40.840, marine_lon: 174.910,
         sat_lat: -40.840, sat_lon: 174.870,
@@ -501,14 +547,19 @@ const REGIONS = {
       {
         name: "Kāpiti West Face",
         spot_type: "swell",
+
+        // Per-spot W (calibrate_per_spot.py, n=533, R2=0.13)
+        // Lags: swell:swell_wave_h_d8(+0.43) | wind:wind_v_d2(-0.17) | rain:rain_d1(+0.19)
+        W: { w_swell:0.1, w_wind:0.31, w_rain:0.59,
+             sst_warm:14.0, sst_cold:-20.0, river_mult:0.18 },
         lat: -40.855557, lon: 174.889112,
         marine_lat: -40.860, marine_lon: 174.860,
         sat_lat: -40.860, sat_lon: 174.862,
         shelter: 0.5, river_impact: 0.5, papa_risk: 0.0, swell_exposure: 0.6,
         dir_exposure: { N:0.2, NE:0.3, E:0.1, SE:0.3, S:0.6, SW:0.8, W:1.0, NW:0.9 },
         depth_m: 18,
-        best_wind_dirs: [0, 225, 270],   // N, SW, W
-        worst_wind_dirs: [90, 135, 180],  // E, SE, S
+        best_wind_dirs: [225, 270, 315],  // SW, W, NW — pipeline: 100% clear on these dirs
+        worst_wind_dirs: [90, 135, 180],  // E, SE, S — pipeline: 95-97% clear (still good but worst)
         wind_push: 0.4,
         sw_flush: 0.4, sw_rain_penalty: 0.5, strait_squeeze: 0.5, tide_sensitive: 0.6,
         rain_recovery_days: 3,
@@ -517,6 +568,58 @@ const REGIONS = {
       },
     ],
   },
+
+  spi: {
+    id: "spi", label: "South Padre", emoji: "🦈",
+    subtitle: "South Padre Island, Texas",
+    mapCenter: [26.20, -96.96], mapZoom: 11,
+    cloudTile: { zoom: 9, x: 118, y: 219 },
+    rtofs: { lat: 26.20, lon: -96.96 },
+    supabaseUrl: "https://mgcwrktuplnjtxkbsypc.supabase.co",
+    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE",
+    logKey: "spi_dive_log", sessionName: "spi_diver_name", sessionWelcome: "spi_welcomed",
+    footer: "SPI Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Built for Gulf divers 🦈",
+    W: { w_swell:0.40, w_wind:0.20, w_rain:0.40, push_mult:10.0, rain_pen_mult:18.0,
+         cur_north:10.0, cur_south:12.0, bight_mult:8.0, sst_warm:12.0, sst_cold:-15.0,
+         tide_mult:0.3, shelter_mult:0.08, river_mult:0.25,
+         hist_2_5:0.65, hist_2_0:0.78, hist_1_5:0.90, seasonal_mult:1.0 },
+    spotSeasonal: {
+      "RGV Reef":     {1:+12,2:-5,3:-15,4:-15,5:-8,6:+5,7:+8,8:+8,9:-8,10:+12,11:+12,12:+15},
+      "The Aquarium": {1:+12,2:-3,3:-15,4:-15,5:-5,6:+7,7:+10,8:+10,9:-5,10:+12,11:+13,12:+15},
+    },
+    seasonalChart: [
+      {month:"Jan",clear:72,blueIdx:8},{month:"Feb",clear:45,blueIdx:4},
+      {month:"Mar",clear:18,blueIdx:1},{month:"Apr",clear:20,blueIdx:1},
+      {month:"May",clear:38,blueIdx:3},{month:"Jun",clear:55,blueIdx:5},
+      {month:"Jul",clear:60,blueIdx:6},{month:"Aug",clear:60,blueIdx:6},
+      {month:"Sep",clear:42,blueIdx:3},{month:"Oct",clear:68,blueIdx:7},
+      {month:"Nov",clear:72,blueIdx:8},{month:"Dec",clear:78,blueIdx:9},
+    ],
+    seasonalNote: "10,701 obs · XGBoost R²=0.43 · SST-driven · Mar 2026",
+    spots: [
+      { name:"RGV Reef", spot_type:"swell",
+        lat:26.27967, lon:-97.05722, marine_lat:26.27967, marine_lon:-97.05722,
+        weather_lat:26.27967, weather_lon:-97.05722, sat_lat:26.27967, sat_lon:-97.05722,
+        shelter:0.5, river_impact:0.4, papa_risk:0.1, swell_exposure:0.5,
+        dir_exposure:{N:0.3,NE:0.5,E:0.7,SE:0.8,S:0.6,SW:0.4,W:0.3,NW:0.2},
+        depth_m:20, tide_sensitive:0.2,
+        best_wind_dirs:[315,0,270], worst_wind_dirs:[90,135,180],
+        wind_push:0.6, nw_rain_penalty:0.2, southerly_bight:0.3,
+        note:"South Padre Island artificial reef, 20m. Rio Grande plume worst Mar-Apr. Oct-Jan clearest. Warm summer SST stratifies water.",
+        trc_sites:[] },
+      { name:"The Aquarium", spot_type:"swell",
+        lat:26.11067, lon:-96.86487, marine_lat:26.11067, marine_lon:-96.86487,
+        weather_lat:26.11067, weather_lon:-96.86487, sat_lat:26.11067, sat_lon:-96.86487,
+        shelter:0.6, river_impact:0.3, papa_risk:0.1, swell_exposure:0.4,
+        dir_exposure:{N:0.3,NE:0.4,E:0.6,SE:0.7,S:0.5,SW:0.3,W:0.2,NW:0.2},
+        depth_m:37, tide_sensitive:0.2,
+        best_wind_dirs:[315,0,270], worst_wind_dirs:[90,135,180],
+        wind_push:0.5, nw_rain_penalty:0.15, southerly_bight:0.2,
+        note:"SPI dive site, 37m — deeper than RGV Reef, benefits more from SST stratification. Same Rio Grande plume influence Mar-Apr.",
+        trc_sites:[] },
+    ],
+  },
+
 };
 
 
@@ -533,7 +636,7 @@ function dirName(deg) {
 // The app interface is identical — callers don't need to change.
 
 // Supabase Edge Function — ONNX scoring (Deno, deployed via supabase functions deploy)
-const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score";
+const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
 const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
 
 // In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
@@ -1949,106 +2052,263 @@ function FactorBar({ label, value, isDelta }) {
   );
 }
 
-function ForecastBar({ days }) {
+// ── Score chart ──────────────────────────────────────────────────────────────
+function ScoreChart({ days }) {
   if (!days || days.length === 0) return null;
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const n = days.length;
+
+  // Match ConditionsChart layout exactly
+  const LABEL_W = 34;
+  const CHART_W = 320;
+  const BAR_H   = 70;
+  const SCORE_H = 14;
+  const LABEL_H = 10;
+  const DAY_H   = 16;
+  const TOTAL_H = DAY_H + BAR_H + SCORE_H + LABEL_H + 4;
+  const colW    = (CHART_W - LABEL_W) / n;
+  const cx      = i => LABEL_W + colW * i + colW / 2;
+
   return (
-    <div className="forecast-bar">
-      <div className="forecast-label-row">7-DAY FORECAST</div>
-      <div className="forecast-days">
+    <div className="chart-wrap">
+      <div className="chart-label">VISIBILITY FORECAST</div>
+      <svg viewBox={"0 0 "+CHART_W+" "+TOTAL_H} width="100%" style={{display:"block",overflow:"visible"}}>
+
+        {/* Col dividers — matches conditions chart */}
+        {days.map((_, i) => i > 0 && (
+          <line key={i} x1={LABEL_W + colW*i} x2={LABEL_W + colW*i}
+            y1="0" y2={TOTAL_H} stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
+        ))}
+
+        {/* Today highlight */}
+        <rect x={LABEL_W} y="0" width={colW} height={TOTAL_H}
+          fill="rgba(106,180,200,0.04)" stroke="none"/>
+
         {days.map((d, i) => {
-          const date = parseDateLocal(d.date);
-          const dayName = i === 0 ? "Today" : dayNames[date.getDay()];
-          const color = scoreToColor(d.score);
+          const date   = parseDateLocal(d.date);
+          const dayName = i === 0 ? "TODAY" : dayNames[date.getDay()].toUpperCase();
+          const color  = scoreToColor(d.score);
+          const label  = d.score >= 80 ? "Exc" : d.score >= 60 ? "Good" : d.score >= 40 ? "Fair" : d.score >= 20 ? "Poor" : "Bad";
+          const barH   = Math.max(3, (d.score / 100) * BAR_H);
+          const barW   = Math.min(colW - 6, 30);
+          const px     = cx(i);
+
           return (
-            <div key={d.date} className="forecast-day"
-              title={`${d.date}: Score ${d.score}\nSwell ${d.cond.swell_h.toFixed(1)}m ${d.cond.swell_p.toFixed(0)}s ${dirName(d.cond.swell_dir)} (72h peak: ${d.cond.swell_hist_72h.toFixed(1)}m)\nGroundswell ${(d.cond.swell_wave_h??0).toFixed(1)}m ${(d.cond.swell_wave_p??0).toFixed(0)}s ${dirName(d.cond.swell_wave_dir??0)} · Chop ${(d.cond.wind_wave_h??0).toFixed(1)}m ${(d.cond.wind_wave_p??0).toFixed(0)}s\nWind ${d.cond.wind_spd.toFixed(0)}kph (${(d.cond.wind_spd / 1.852).toFixed(0)}kt) ${dirName(d.cond.wind_dir)}\nSST ${d.cond.sst.toFixed(1)}°C\nRain 48h: ${d.cond.rain_48h.toFixed(1)}mm · ${d.cond.days_since_rain}d since rain`}>
-              <div className="fday-name">{dayName}</div>
-              <div className="fday-bar-wrap">
-                <div className="fday-bar" style={{
-                  height: `${d.score}%`,
-                  background: `linear-gradient(to top, ${color}cc, ${color}33)`,
-                  borderTop: `2px solid ${color}`,
-                }} />
-              </div>
-              <div className="fday-score" style={{ color }}>{d.score}</div>
-              <div className="fday-swell">{d.cond.swell_h.toFixed(1)}m</div>
-            </div>
+            <g key={d.date}>
+              {/* Day name top */}
+              <text x={px} y={DAY_H/2} textAnchor="middle" dominantBaseline="central"
+                fontSize={i===0?"7":"6.5"} fontFamily="Space Mono,monospace"
+                fill={i===0?"#6ab4c8":"#3a6a7a"} fontWeight={i===0?"700":"400"}>
+                {dayName}
+              </text>
+              {/* Bar */}
+              <rect x={px - barW/2} y={DAY_H + BAR_H - barH}
+                width={barW} height={barH} rx="2"
+                fill={color+"99"} stroke={color} strokeWidth="1.5"/>
+              {/* Score */}
+              <text x={px} y={DAY_H + BAR_H + SCORE_H/2 + 2}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize="9" fontWeight="700" fontFamily="Space Mono,monospace" fill={color}>
+                {d.score}
+              </text>
+              {/* Label */}
+              <text x={px} y={DAY_H + BAR_H + SCORE_H + LABEL_H/2 + 2}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize="6.5" fontFamily="Space Mono,monospace" fill={color+"bb"}>
+                {label}
+              </text>
+            </g>
           );
         })}
+      </svg>
+    </div>
+  );
+}
+
+// ── Conditions chart — swimlane ──────────────────────────────────────────────
+function ConditionsChart({ days, currentData }) {
+  if (!days || days.length === 0) return null;
+  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const n = days.length;
+
+  function wc(spd) {
+    return spd <= 8 ? "#00e5a0" : spd <= 15 ? "#6ab4c8" : spd <= 25 ? "#f0c040" : spd <= 35 ? "#f07040" : "#e03030";
+  }
+  function sc(h) {
+    return h < 0.5 ? "#00e5a0" : h < 1.0 ? "#6ab4c8" : h < 1.5 ? "#f0c040" : h < 2.0 ? "#f07040" : "#e03030";
+  }
+
+  // Layout
+  const LABEL_W = 34;
+  const ROW_H_PILL = 38;  // swell + wind rows
+  const ROW_H_RAIN = 22;  // rain row
+  const ROW_H_SST  = 30;  // SST row
+  const DAY_ROW    = 18;  // day name footer
+  const TOTAL_H    = ROW_H_PILL * 2 + ROW_H_RAIN + ROW_H_SST + DAY_ROW;
+  const CHART_W    = 320;
+  const colW       = (CHART_W - LABEL_W) / n;
+  const cx         = i => LABEL_W + colW * i + colW / 2;
+
+  // Row Y offsets
+  const Y_SWELL = 0;
+  const Y_WIND  = ROW_H_PILL;
+  const Y_RAIN  = ROW_H_PILL * 2;
+  const Y_SST   = ROW_H_PILL * 2 + ROW_H_RAIN;
+  const Y_DAYS  = Y_SST + ROW_H_SST;
+
+  const maxRain = Math.max(1, ...days.map(d => d.cond.rain_48h ?? 0));
+  const sstVals = days.map(d => d.cond.sst ?? 16);
+  const sstMin  = Math.min(...sstVals);
+  const sstMax  = Math.max(...sstVals);
+
+  const PILL_W = Math.min(colW - 4, 36);
+  const PILL_H = 20;
+
+  return (
+    <div className="chart-wrap" style={{marginTop:"0.8rem"}}>
+      <div className="chart-label">CONDITIONS</div>
+      <svg viewBox={"0 0 "+CHART_W+" "+TOTAL_H} width="100%" style={{display:"block",overflow:"visible"}}>
+
+        {/* ── Row backgrounds ── */}
+        <rect x="0" y={Y_SWELL} width={CHART_W} height={ROW_H_PILL} fill="rgba(106,180,200,0.05)"/>
+        <rect x="0" y={Y_WIND}  width={CHART_W} height={ROW_H_PILL} fill="rgba(138,180,200,0.03)"/>
+        <rect x="0" y={Y_RAIN}  width={CHART_W} height={ROW_H_RAIN} fill="rgba(100,180,220,0.03)"/>
+        <rect x="0" y={Y_SST}   width={CHART_W} height={ROW_H_SST}  fill="rgba(0,229,160,0.02)"/>
+        <rect x="0" y={Y_DAYS}  width={CHART_W} height={DAY_ROW}    fill="rgba(0,0,0,0.15)"/>
+
+        {/* ── Row dividers ── */}
+        {[Y_WIND, Y_RAIN, Y_SST, Y_DAYS].map(y => (
+          <line key={y} x1="0" x2={CHART_W} y1={y} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+        ))}
+
+        {/* ── Row labels ── */}
+        {[
+          {label:"SWELL", y: Y_SWELL + ROW_H_PILL/2, col:"#3a8a9a"},
+          {label:"WIND",  y: Y_WIND  + ROW_H_PILL/2, col:"#3a7a8a"},
+          {label:"RAIN",  y: Y_RAIN  + ROW_H_RAIN/2, col:"#2a6a7a"},
+          {label:"SST",   y: Y_SST   + ROW_H_SST/2,  col:"#2a6a6a"},
+        ].map(({label, y, col}) => (
+          <text key={label} x="2" y={y} fontSize="6" fontFamily="Space Mono,monospace"
+            fill={col} fontWeight="700" dominantBaseline="central">{label}</text>
+        ))}
+
+        {/* ── Col dividers ── */}
+        {days.map((_, i) => i > 0 && (
+          <line key={i} x1={LABEL_W + colW*i} x2={LABEL_W + colW*i}
+            y1="0" y2={Y_DAYS} stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
+        ))}
+
+        {/* ── Day data ── */}
+        {days.map((d, i) => {
+          const date    = parseDateLocal(d.date);
+          const dayName = i === 0 ? "TODAY" : dayNames[date.getDay()].toUpperCase();
+          const swell   = d.cond.swell_h;
+          const wind    = d.cond.wind_spd;
+          const rain    = d.cond.rain_48h ?? 0;
+          const sst     = d.cond.sst ?? 16;
+          const swc     = sc(swell);
+          const wnc     = wc(wind);
+          const sstC    = sst > 18 ? "#00e5a0" : sst > 16 ? "#6ab4c8" : sst > 14 ? "#f0c040" : "#e03030";
+          const swDir   = (d.cond.swell_dir ?? d.cond.swell_wave_dir) ?? 0;
+          const wiDir   = d.cond.wind_dir ?? 0;
+          const px      = cx(i);
+
+          // Rain bar width proportional (max fills 80% of cell)
+          const rainBarW = rain > 0 ? Math.max(4, (rain / maxRain) * (colW * 0.8)) : 0;
+          // SST dot radius 3–6 based on relative temp
+          const sstR = sstMax > sstMin
+            ? 3 + ((sst - sstMin) / (sstMax - sstMin)) * 3
+            : 4.5;
+
+          return (
+            <g key={d.date}>
+              {/* SWELL pill */}
+              <rect x={px - PILL_W/2} y={Y_SWELL + (ROW_H_PILL-PILL_H)/2}
+                width={PILL_W} height={PILL_H} rx="4"
+                fill={swc+"28"} stroke={swc} strokeWidth={i===0?"1.5":"1"}/>
+              <text x={px} y={Y_SWELL + ROW_H_PILL/2 - 1}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize="8" fontWeight="700" fontFamily="Space Mono,monospace" fill={swc}>
+                {swell.toFixed(1)}m
+              </text>
+              {/* Swell direction arrow */}
+              <g transform={"translate("+px+","+(Y_SWELL+ROW_H_PILL-6)+") rotate("+swDir+")"}>
+                <line x1="0" y1="-5" x2="0" y2="2" stroke={swc} strokeWidth="1.5" strokeLinecap="round"/>
+                <polygon points="0,-6 -2,-2 2,-2" fill={swc}/>
+              </g>
+
+              {/* WIND pill */}
+              <rect x={px - PILL_W/2} y={Y_WIND + (ROW_H_PILL-PILL_H)/2}
+                width={PILL_W} height={PILL_H} rx="4"
+                fill={wnc+"18"} stroke={wnc+"99"} strokeWidth={i===0?"1.5":"1"}/>
+              <text x={px} y={Y_WIND + ROW_H_PILL/2 - 1}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize="7.5" fontWeight="700" fontFamily="Space Mono,monospace" fill={wnc+"cc"}>
+                {wind.toFixed(0)}kph
+              </text>
+              {/* Wind direction arrow */}
+              <g transform={"translate("+px+","+(Y_WIND+ROW_H_PILL-6)+") rotate("+wiDir+")"}>
+                <line x1="0" y1="-5" x2="0" y2="2" stroke={wnc} strokeWidth="1.5" strokeLinecap="round" opacity="0.8"/>
+                <polygon points="0,-6 -2,-2 2,-2" fill={wnc} opacity="0.8"/>
+              </g>
+
+              {/* RAIN bar */}
+              {rain > 0 ? (
+                <>
+                  <rect x={px - rainBarW/2} y={Y_RAIN + 4}
+                    width={rainBarW} height={ROW_H_RAIN - 8} rx="2"
+                    fill="rgba(100,180,220,0.3)" stroke="rgba(100,180,220,0.5)" strokeWidth="1"/>
+                  <text x={px} y={Y_RAIN + ROW_H_RAIN/2}
+                    textAnchor="middle" dominantBaseline="central"
+                    fontSize="6.5" fontFamily="Space Mono,monospace" fill="#6ab4c8cc">
+                    {rain.toFixed(0)}mm
+                  </text>
+                </>
+              ) : (
+                <text x={px} y={Y_RAIN + ROW_H_RAIN/2}
+                  textAnchor="middle" dominantBaseline="central"
+                  fontSize="8" fontFamily="Space Mono,monospace" fill="rgba(58,100,120,0.4)">—</text>
+              )}
+
+              {/* SST dot + value */}
+              <circle cx={px} cy={Y_SST + ROW_H_SST/2 - 2} r={sstR}
+                fill={sstC+"44"} stroke={sstC} strokeWidth="1.2"/>
+              <text x={px} y={Y_SST + ROW_H_SST - 5}
+                textAnchor="middle" fontSize="6.5"
+                fontFamily="Space Mono,monospace" fill={sstC+"bb"}>
+                {sst.toFixed(1)}°
+              </text>
+
+              {/* Day name */}
+              <text x={px} y={Y_DAYS + DAY_ROW/2}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize={i===0?"7":"6.5"} fontFamily="Space Mono,monospace"
+                fill={i===0?"#6ab4c8":"#3a6a7a"} fontWeight={i===0?"700":"400"}>
+                {dayName}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* ── Today highlight border ── */}
+        <rect x={LABEL_W} y="0" width={colW} height={Y_DAYS}
+          fill="none" stroke="rgba(106,180,200,0.15)" strokeWidth="1.5" rx="2"/>
+
+      </svg>
+
+      {/* Legend */}
+      <div className="cc-legend">
+        <div className="cc-legend-row">
+          <span className="cc-legend-item">Pill colour + arrow = intensity &amp; direction</span>
+          <span className="cc-legend-item"><span style={{color:"#00e5a0"}}>■</span> Calm &nbsp;<span style={{color:"#6ab4c8"}}>■</span> OK &nbsp;<span style={{color:"#f0c040"}}>■</span> Mod &nbsp;<span style={{color:"#f07040"}}>■</span> Poor &nbsp;<span style={{color:"#e03030"}}>■</span> Bad</span>
+        </div>
       </div>
     </div>
   );
 }
 
-function WindForecastBar({ days }) {
-  if (!days || days.length === 0) return null;
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const maxWind = Math.max(30, ...days.map(d => d.cond.wind_spd));
-
-  function windColor(spd) {
-    if (spd <= 8) return "#00e5a0";
-    if (spd <= 15) return "#6ab4c8";
-    if (spd <= 25) return "#f0c040";
-    if (spd <= 35) return "#f07040";
-    return "#e03030";
-  }
-
-  function windLabel(spd) {
-    if (spd <= 5) return "Calm";
-    if (spd <= 10) return "Light";
-    if (spd <= 20) return "Moderate";
-    if (spd <= 30) return "Fresh";
-    return "Strong";
-  }
-
-  return (
-    <div className="wind-forecast-bar">
-      <div className="wind-forecast-label">💨 WIND FORECAST</div>
-      <div className="wind-forecast-days">
-        {days.map((d, i) => {
-          const date = parseDateLocal(d.date);
-          const dayName = i === 0 ? "Today" : dayNames[date.getDay()];
-          const spd = d.cond.wind_spd;
-          const dir = d.cond.wind_dir;
-          const color = windColor(spd);
-          const barH = Math.max(8, (spd / maxWind) * 100);
-          const isNW = dir >= 270 && dir <= 360;
-
-          return (
-            <div key={d.date} className="wf-day"
-              title={`${d.date}: ${spd.toFixed(0)} kph ${dirName(dir)} (${(spd / 1.852).toFixed(0)} kt)\n${windLabel(spd)}${isNW ? " — NW push active 🟢" : ""}`}>
-              <div className="wf-day-name">{dayName}</div>
-              <div className="wf-arrow" style={{
-                transform: `rotate(${dir}deg)`,
-                color: color,
-                opacity: spd < 3 ? 0.3 : 1,
-              }}>↓</div>
-              <div className="wf-bar-wrap">
-                <div className="wf-bar" style={{
-                  height: `${barH}%`,
-                  background: `linear-gradient(to top, ${color}cc, ${color}33)`,
-                  borderTop: `2px solid ${color}`,
-                }} />
-              </div>
-              <div className="wf-speed" style={{ color }}>{spd.toFixed(0)}</div>
-              <div className="wf-dir">{dirName(dir)}</div>
-              {isNW && <div className="wf-nw-badge" title="NW push active">🌊</div>}
-            </div>
-          );
-        })}
-      </div>
-      <div className="wf-legend">
-        <span style={{color:"#00e5a0"}}>● &lt;8 Calm</span>
-        <span style={{color:"#6ab4c8"}}>● 8–15 Light</span>
-        <span style={{color:"#f0c040"}}>● 15–25 Mod</span>
-        <span style={{color:"#f07040"}}>● 25–35 Fresh</span>
-        <span style={{color:"#e03030"}}>● 35+ Strong</span>
-        <span style={{color:"#4a8a9a",marginLeft:"0.4rem"}}>kph · ↓ = wind from</span>
-      </div>
-    </div>
-  );
-}
+function ForecastBar({ days }) { return null; }
+function WindForecastBar({ days }) { return null; }
 
 // ── Dive log modal ────────────────────────────────────────────────────────────
 
@@ -2257,90 +2517,29 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
             />
           )}
 
-          {/* Conditions grid */}
-          <div className="conditions">
-            {[
-              { icon: "🌊", val: `${data.cond.swell_h.toFixed(1)}m ${data.cond.swell_p.toFixed(0)}s ${dirName(data.cond.swell_dir)}`, key: "Swell" },
-              { icon: "💨", val: (() => {
-                  const spd = data.cond.wind_spd;
-                  const dir = dirName(data.cond.wind_dir);
-                  const src = data.cond.wind_source;
-                  const spdKt = (spd / 1.852).toFixed(0);
-                  let label = `${spd.toFixed(0)}kph (${spdKt}kt) ${dir}`;
-                  if (src === "none") label += " ⚠️";
-                  return label;
-                })(), key: (() => {
-                  const src = data.cond.wind_source;
-                  if (src === "current") return "Wind · live";
-                  if (src === "hourly") return "Wind · forecast";
-                  return "Wind ⚠️ no data";
-                })() },
-              { icon: "🌧", val: `${data.cond.rain_48h.toFixed(1)}mm`, key: "Rain 48h" },
-              { icon: "🌡️", val: `${data.cond.sst.toFixed(1)}°C`, key: "SST" },
-              // CHANGE 4: Satellite turbidity row
-              ...(data.satData ? [{
-                icon: "🛰️",
-                val: (() => {
-                  const t = data.satData.turbidity;
-                  const age = data.satData.agedays;
-                  const label = t > 60 ? "Turbid" : t > 30 ? "Moderate" : t > 10 ? "Clear" : "Very Clear";
-                  const tColor = t > 60 ? "#e03030" : t > 30 ? "#f07040" : t > 10 ? "#f0c040" : "#00e5a0";
-                  const srcLabel = data.satData.turbiditySource === "bands721" ? "SWIR" : "TC";
-                  return (
-                    <span>
-                      <span style={{color: tColor}}>{label} ({t})</span>
-                      {" "}
-                      <span style={{
-                        display:"inline-block", width:10, height:10,
-                        borderRadius:"50%", verticalAlign:"middle",
-                        background:`rgb(${data.satData.r},${data.satData.g},${data.satData.b})`,
-                        border:"1px solid #334"
-                      }} />
-                      <span style={{color:"#4a7a8a",fontSize:"0.65rem"}}> {age}d ago · {srcLabel}</span>
-                    </span>
-                  );
-                })(),
-                key: "Sat Turbidity",
-              }] : []),
-              // Webcam turbidity row (live camera pixel analysis)
-              ...(data.webcamData ? [{
-                icon: "📷",
-                val: (() => {
-                  const t = data.webcamData.turbidity;
-                  const label = t > 60 ? "Turbid" : t > 30 ? "Moderate" : t > 10 ? "Clear" : "Very Clear";
-                  const tColor = t > 60 ? "#e03030" : t > 30 ? "#f07040" : t > 10 ? "#f0c040" : "#00e5a0";
-                  const surf = data.webcamData.surfaceState;
-                  const surfIcon = surf === "rough" ? "🌊" : surf === "choppy" ? "〰️" : "🪞";
-                  return (
-                    <span>
-                      <span style={{color: tColor}}>{label} ({t})</span>
-                      {" "}{surfIcon}
-                      <span style={{
-                        display:"inline-block", width:10, height:10,
-                        borderRadius:"50%", verticalAlign:"middle",
-                        background:`rgb(${data.webcamData.r},${data.webcamData.g},${data.webcamData.b})`,
-                        border:"1px solid #334", marginLeft:4
-                      }} />
-                      <span style={{color:"#4a7a8a",fontSize:"0.65rem"}}> {data.webcamData.source === "supabase" ? "☀️ morning read" : "🔴 live"} · {data.webcamData.camName} · {data.webcamData.solarLabel ?? ""}</span>
-                    </span>
-                  );
-                })(),
-                key: "Webcam",
-              }] : []),
-              { icon: "🌀", val: (() => {
-                  if (currentData?.valid) return `${currentData.speed.toFixed(1)}kt ${currentData.dirLabel} (RTOFS)`;
-                  return `${data.cond.current_vel.toFixed(2)}m/s ${dirName(data.cond.current_dir)}`;
-                })(), key: "Current" },
-            ].map(c => (
-              <div key={c.key} className="cond">
-                <span className="cond-icon">{c.icon}</span>
-                <div>
-                  <div className="cond-val">{c.val}</div>
-                  <div className="cond-key">{c.key}</div>
-                </div>
-              </div>
-            ))}
-          </div>}
+          {/* Live data strip */}
+          <div className="live-strip">
+            <span className="ls-item">🌊 <span style={{color:"#6ab4c8"}}>{data.cond.swell_h.toFixed(1)}m {data.cond.swell_p.toFixed(0)}s {dirName(data.cond.swell_dir)}</span></span>
+            <span className="ls-sep">·</span>
+            <span className="ls-item">
+              <span style={{display:"inline-block",transform:"rotate("+data.cond.wind_dir+"deg)",color:data.cond.wind_spd>25?"#f07040":data.cond.wind_spd>15?"#f0c040":"#6ab4c8"}}>↓</span>
+              <span style={{color:data.cond.wind_spd>25?"#f07040":data.cond.wind_spd>15?"#f0c040":"#6ab4c8",marginLeft:2}}>{data.cond.wind_spd.toFixed(0)}kph {dirName(data.cond.wind_dir)}</span>
+              <span style={{fontSize:"0.55rem",color:"#2a5a6a",marginLeft:3}}>{data.cond.wind_source==="current"?"live":"fcst"}</span>
+            </span>
+            <span className="ls-sep">·</span>
+            <span className="ls-item">🌡️ <span style={{color:data.cond.sst>18?"#00e5a0":data.cond.sst<16?"#f07040":"#6ab4c8"}}>{data.cond.sst.toFixed(1)}°C SST</span></span>
+            {(data.cond.rain_48h??0)>0 && <><span className="ls-sep">·</span><span className="ls-item">🌧 <span style={{color:"#6ab4c8"}}>{data.cond.rain_48h.toFixed(0)}mm</span></span></>}
+            {currentData?.valid && <><span className="ls-sep">·</span><span className="ls-item">🌀 <span style={{color:"#4a8a9a"}}>{currentData.speed.toFixed(1)}kt {currentData.dirLabel}</span></span></>}
+            {data.satData && <><span className="ls-sep">·</span>
+              <span className="ls-item">🛰️ <span style={{color:data.satData.turbidity>60?"#e03030":data.satData.turbidity>30?"#f07040":data.satData.turbidity>10?"#f0c040":"#00e5a0"}}>
+                {data.satData.turbidity>60?"Turbid":data.satData.turbidity>30?"Mod":data.satData.turbidity>10?"Clear":"V.Clear"}</span>
+                <span style={{color:"#2a5a6a",fontSize:"0.55rem",marginLeft:2}}>{data.satData.agedays}d</span>
+                <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",verticalAlign:"middle",background:"rgb("+data.satData.r+","+data.satData.g+","+data.satData.b+")",border:"1px solid #334",marginLeft:3}}/>
+              </span>
+            </>}
+            {data.webcamData && <><span className="ls-sep">·</span><span className="ls-item">📷 <span style={{color:data.webcamData.turbidity>60?"#e03030":data.webcamData.turbidity>10?"#f0c040":"#00e5a0"}}>{data.webcamData.turbidity>60?"Turbid":data.webcamData.turbidity>10?"Hazy":"Clear"}</span></span></>}
+            {(data.cond.riverFNU??0)>0 && <><span className="ls-sep">·</span><span className="ls-item">💧 <span style={{color:data.cond.riverFNU>100?"#e03030":data.cond.riverFNU>30?"#f07040":"#6ab4c8"}}>{data.cond.riverFNU.toFixed(0)} FNU</span></span></>}
+          </div>
 
           {/* Factor breakdown — hidden from UI, scoring runs in background
           <div className="factors-grid">
@@ -2364,10 +2563,9 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
           </div>
           */}
 
-          <div className="spot-note">{spot.note}</div>
+          {/* spot note hidden */}
 
-          {/* Live river turbidity callout from TRC gauges */}
-          {spot.trc_sites && data.cond.riverFNU != null && data.cond.riverFNU > 0 && (() => {
+          {/* river FNU shown in live strip */ false && (() => {
             const fnu = data.cond.riverFNU;
             const trend = data.cond.riverTrendFactor > 1.1 ? " ↑ rising" : "";
             const level = fnu < 5 ? { label: "clear", color: "#00e5a0" }
@@ -2389,11 +2587,10 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
             <div className="warning">⚠️ Recent rain — expect river runoff and reduced viz at this spot</div>
           )}
 
-          <SpotHistory spotName={spot.name} entries={logEntries || []} />
           <CommunityLogPanel logs={communityLogs || []} logStatus={logStatus} spotName={spot.name} />
 
-          {data.forecast && <ForecastBar days={data.forecast} />}
-          {data.forecast && <WindForecastBar days={data.forecast} />}
+          {data.forecast && <ScoreChart days={data.forecast} />}
+          {data.forecast && <ConditionsChart days={data.forecast} currentData={currentData} />}
 
           {expanded && data.forecast && (
             <div className="expanded-table">
@@ -3473,8 +3670,6 @@ function WelcomeBanner({ onDismiss, onSetName, onSetEmail, diverName, regionLabe
 
 // ── Community log panel ───────────────────────────────────────────────────────
 function CommunityLogPanel({ logs, logStatus, spotName }) {
-  const [expanded, setExpanded] = useState(false);
-  const spotLogs = spotName ? logs.filter(e => e.spot === spotName).slice(0, expanded ? 20 : 4) : logs.slice(0, expanded ? 50 : 8);
   const title = spotName ? "COMMUNITY OBSERVATIONS" : "RECENT COMMUNITY OBSERVATIONS";
   if (logStatus === "unconfigured") return (
     <div className="community-panel unconfigured"><div className="cp-title">🌐 {title}</div><div className="cp-unconfigured">⚙️ Configure Supabase to enable shared logging.</div></div>
@@ -3482,6 +3677,7 @@ function CommunityLogPanel({ logs, logStatus, spotName }) {
   if (logStatus === "loading") return (<div className="community-panel"><div className="cp-title">🌐 {title}</div><div className="loading-bar"><div className="loading-fill"/></div></div>);
   if (logStatus === "error") return (<div className="community-panel"><div className="cp-title">🌐 {title}</div><div style={{color:"#e06040",fontSize:"0.75rem"}}>Could not connect to database.</div></div>);
   const allSpotLogs = spotName ? logs.filter(e => e.spot === spotName) : logs;
+  const latest = allSpotLogs[0] ?? null;
   const bias = spotName ? spotBiasMultiplier(spotName, logs) : null;
   return (
     <div className="community-panel">
@@ -3493,19 +3689,21 @@ function CommunityLogPanel({ logs, logStatus, spotName }) {
           </div>
         )}
       </div>
-      {allSpotLogs.length === 0 && logStatus === "ok" && <div style={{color:"#3a6070",fontSize:"0.75rem",padding:"0.4rem 0"}}>No observations yet — be the first!</div>}
-      {spotLogs.map((e, i) => (
-        <div key={e.id || i} className="cp-row">
-          <span className="cp-diver">🤿 {e.diver_name}</span>
-          <span className="cp-date">{e.date}</span>
-          <span className="cp-vis" style={{color: scoreToColor(Math.round((e.observed_vis ?? e.observedVis ?? 0) * 10))}}>{e.observed_vis ?? e.observedVis}m</span>
-          <span className="cp-tide">{e.tide} tide</span>
-          <span className="cp-model">model: {e.model_score ?? e.modelScore}</span>
-          {e.notes && <span className="cp-note" title={e.notes}>📝</span>}
+      {!latest && logStatus === "ok" && <div style={{color:"#3a6070",fontSize:"0.75rem",padding:"0.4rem 0"}}>No observations yet — be the first!</div>}
+      {latest && (
+        <div className="cp-row">
+          <span className="cp-diver">🤿 {latest.diver_name}</span>
+          <span className="cp-date">{latest.date}</span>
+          <span className="cp-vis" style={{color: scoreToColor(Math.round((latest.observed_vis ?? latest.observedVis ?? 0) * 10))}}>{latest.observed_vis ?? latest.observedVis}m</span>
+          <span className="cp-tide">{latest.tide} tide</span>
+          <span className="cp-model">model: {latest.model_score ?? latest.modelScore}</span>
+          {latest.notes && <span className="cp-note" title={latest.notes}>📝</span>}
         </div>
-      ))}
-      {allSpotLogs.length > (spotName ? 4 : 8) && (
-        <button className="cp-more" onClick={() => setExpanded(e => !e)}>{expanded ? "Show less" : `Show all ${allSpotLogs.length} observations`}</button>
+      )}
+      {allSpotLogs.length > 1 && (
+        <div style={{color:"#2a5a6a",fontSize:"0.62rem",marginTop:"0.3rem",fontFamily:"'Space Mono',monospace"}}>
+          +{allSpotLogs.length - 1} more observation{allSpotLogs.length > 2 ? "s" : ""}
+        </div>
       )}
     </div>
   );
@@ -3558,7 +3756,7 @@ export default function App() {
   const [region, setRegion] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);
-      return p.get("region") === "kapiti" ? "kapiti" : "taranaki";
+      const r = p.get("region"); return (r === "kapiti" || r === "spi") ? r : "taranaki";
     } catch(e) { return "taranaki"; }
   });
   const REGION = REGIONS[region];
@@ -3722,6 +3920,32 @@ export default function App() {
         .spot-note { font-size: 0.72rem; color: #3a6070; line-height: 1.5; margin-bottom: 0.6rem; padding: 0.5rem 0.6rem; background: rgba(0,0,0,0.15); border-radius: 6px; border-left: 2px solid #1a3a4a; }
         .warning { margin-top: 0.6rem; font-size: 0.72rem; color: #c08020; background: rgba(200,130,0,0.08); border: 1px solid rgba(200,130,0,0.2); border-radius: 6px; padding: 0.5rem 0.7rem; }
 
+        .live-strip { display:flex; flex-wrap:wrap; align-items:center; gap:0.2rem 0; margin-bottom:0.7rem; padding:0.4rem 0.6rem; background:rgba(0,0,0,0.2); border-radius:8px; font-size:0.67rem; }
+        .ls-item { display:flex; align-items:center; gap:2px; white-space:nowrap; }
+        .ls-sep { color:#1a3a4a; margin:0 0.25rem; }
+        .chart-wrap { margin-top:0.9rem; }
+        .chart-label { font-size:0.56rem; font-family:"Space Mono",monospace; color:#2a5a6a; letter-spacing:0.15em; margin-bottom:0.4rem; }
+        .sc-chart-svg { display:block; width:100%; }
+        .cc-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:0.25rem; }
+        .cc-day { display:flex; flex-direction:column; align-items:center; gap:2px; cursor:default; padding:0.2rem 0.1rem; border-radius:5px; transition:background 0.15s; }
+        .cc-day:hover { background:rgba(255,255,255,0.04); }
+        .cc-dayname { font-size:0.5rem; color:#4a7a8a; font-family:"Space Mono",monospace; white-space:nowrap; }
+        .cc-bars { width:100%; position:relative; display:flex; align-items:flex-end; gap:1px; }
+        .cc-bar-swell { flex:1; border-radius:2px 2px 0 0; min-height:3px; }
+        .cc-bar-wind  { flex:1; border-radius:2px 2px 0 0; min-height:3px; }
+        .cc-bar-rain  { position:absolute; left:0; right:0; bottom:0; border-radius:2px 2px 0 0; min-height:2px; pointer-events:none; }
+        .cc-sst-dot   { position:absolute; left:50%; transform:translateX(-50%); width:7px; height:7px; border-radius:50%; pointer-events:none; }
+        .cc-dir-row   { display:flex; justify-content:center; gap:4px; line-height:1; }
+        .cc-wind-arrow  { font-size:0.8rem; line-height:1; display:inline-block; }
+        .cc-swell-arrow { font-size:0.8rem; line-height:1; display:inline-block; opacity:0.75; }
+        .cc-swell-val { font-size:0.54rem; font-family:"Space Mono",monospace; font-weight:700; }
+        .cc-sst-val   { font-size:0.52rem; }
+        .cc-cur       { font-size:0.44rem; color:#2a5a6a; text-align:center; }
+        .cc-legend    { margin-top:0.7rem; padding:0.6rem 0.8rem; background:rgba(0,0,0,0.15); border-radius:6px; border:1px solid rgba(255,255,255,0.04); }
+        .cc-legend-row { display:flex; flex-wrap:wrap; gap:0.3rem 1.2rem; font-size:0.5rem; color:#3a6a7a; font-family:"Space Mono",monospace; margin-bottom:0.3rem; }
+        .cc-legend-row:last-child { margin-bottom:0; }
+        .cc-legend-item { white-space:nowrap; }
+        .cc-legend-colors { gap:0.5rem; margin-top:0.1rem; padding-top:0.35rem; border-top:1px solid rgba(255,255,255,0.04); }
         .forecast-bar { margin-top: 1.2rem; }
         .forecast-label-row { font-size: 0.58rem; font-family: 'Space Mono', monospace; color: #2a5a6a; letter-spacing: 0.15em; margin-bottom: 0.5rem; }
         .forecast-days { display: flex; gap: 0.3rem; height: 90px; align-items: flex-end; }
