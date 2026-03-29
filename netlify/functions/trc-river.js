@@ -335,7 +335,7 @@ exports.handler = async () => {
     "Access-Control-Allow-Origin":  "*",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type":  "application/json",
-    "Cache-Control": "public, max-age=300",
+    "Cache-Control": "no-store",
   };
 
   try {
