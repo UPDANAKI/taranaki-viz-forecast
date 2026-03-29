@@ -167,7 +167,7 @@ const REGIONS = {
     cloudTile: { zoom: 9, x: 504, y: 319 },
     rtofs: { lat: -39.10, lon: 173.90 },
     supabaseUrl: "https://mgcwrktuplnjtxkbsypc.supabase.co",
-    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE",
+    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MjA3MzgsImV4cCI6MjA4ODA5NjczOH0.vk_ylXl3wny0NjIUD9D89324muA74bXx3Mg6Syq8yMA",
     logKey: "taranaki_dive_log",
     sessionName: "diver_name",
     sessionWelcome: "welcomed",
@@ -586,7 +586,7 @@ const REGIONS = {
     cloudTile: { zoom: 9, x: 118, y: 219 },
     rtofs: { lat: 26.20, lon: -96.96 },
     supabaseUrl: "https://mgcwrktuplnjtxkbsypc.supabase.co",
-    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE",
+    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MjA3MzgsImV4cCI6MjA4ODA5NjczOH0.vk_ylXl3wny0NjIUD9D89324muA74bXx3Mg6Syq8yMA",
     logKey: "spi_dive_log", sessionName: "spi_diver_name", sessionWelcome: "spi_welcomed",
     footer: "SPI Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Built for Gulf divers 🦈",
     W: { w_swell:0.40, w_wind:0.20, w_rain:0.40, push_mult:10.0, rain_pen_mult:18.0,
@@ -654,7 +654,7 @@ function dirName(deg) {
 
 // Supabase Edge Function — ONNX scoring (Deno, deployed via supabase functions deploy)
 const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
-const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
+const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MjA3MzgsImV4cCI6MjA4ODA5NjczOH0.vk_ylXl3wny0NjIUD9D89324muA74bXx3Mg6Syq8yMA";
 
 // In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
 const _scoreCache = new Map();
@@ -2109,6 +2109,7 @@ if (swirFraction >= swirMinSignal) {
           const dir = weather.hourly?.wind_direction_10m?.[wIdxNow];
           if (spd != null && dir != null) {
             weather.current = { wind_speed_10m: spd, wind_direction_10m: dir };
+          }
 
           const wIdx0 = nowIdx(weather.hourly?.time ?? []);
 
