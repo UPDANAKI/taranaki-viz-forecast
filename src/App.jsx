@@ -1680,9 +1680,6 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     // (e.g. 33mm at New Plymouth gauge showed as 0.1mm in Open-Meteo).
     // Falls back to Open-Meteo if gauge data hasn't loaded yet.
     const gaugeRain = spot.rain_gauge ? rainRef.current?.[spot.rain_gauge] : null;
-    if (gaugeRain) {
-      console.log(`[TRC Rain] ${spot.name}: using gauge ${spot.rain_gauge} — 48h=${gaugeRain.rain_48h}mm dsr=${gaugeRain.days_since_rain}`);
-    }
 
     const r48 = gaugeRain ? gaugeRain.rain_48h : rain48h(wTimes, weather.hourly?.precipitation ?? []);
     const dsr = gaugeRain ? gaugeRain.days_since_rain : daysSinceRain(weather.hourly?.precipitation ?? []);
@@ -2112,18 +2109,8 @@ if (swirFraction >= swirMinSignal) {
           const dir = weather.hourly?.wind_direction_10m?.[wIdxNow];
           if (spd != null && dir != null) {
             weather.current = { wind_speed_10m: spd, wind_direction_10m: dir };
-            console.log(`[${spot.name}] Current wind from hourly[${wIdxNow}]: ${spd} kph @ ${dir}°`);
-          }
 
           const wIdx0 = nowIdx(weather.hourly?.time ?? []);
-          console.log(`[${spot.name}] Weather API:`, {
-            hasCurrentBlock: !!weather.current,
-            currentWind: weather.current?.wind_speed_10m ?? "MISSING",
-            currentWindDir: weather.current?.wind_direction_10m ?? "MISSING",
-            hourlyWindAtNow: weather.hourly?.wind_speed_10m?.[wIdx0] ?? "NULL",
-            hourlyLength: weather.hourly?.wind_speed_10m?.length ?? 0,
-            nonZeroWindHours: (weather.hourly?.wind_speed_10m ?? []).filter(v => v > 0).length,
-          });
 
           if (!cancelled) {
             rawApiRef.current[spot.name] = { marine, weather };
@@ -2133,12 +2120,6 @@ if (swirFraction >= swirMinSignal) {
               currentRef.current,
               logEntries,
             );
-
-            console.log(`[${spot.name}] Wind resolved:`, {
-              source: result.cond.wind_source,
-              spd: result.cond.wind_spd?.toFixed(1) + " kph",
-              dir: result.cond.wind_dir?.toFixed(0) + "° (" + dirName(result.cond.wind_dir) + ")",
-            });
 
             setSpotDataMap(prev => ({ ...prev, [spot.name]: result }));
           }
