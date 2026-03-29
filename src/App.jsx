@@ -295,6 +295,7 @@ const REGIONS = {
         nw_rain_penalty: 0.5, southerly_bight: 0.0, tide_sensitive: 0.3,
         plume_reach: 0.7,
         trc_sites: [166, 17], // Urenui (primary), Mangati (secondary)
+        rain_gauge: 52,       // TRC rain gauge: New Plymouth / Brooklands Zoo
         note: "Outermost Sugar Loaf, ~1.5km offshore. Andesite rock, no papa. Pipeline: clean water from S/SE, not NW. Fast recovery (~1 day). Post-rain plume can still reach island.",
         river: false,
       },
@@ -319,6 +320,7 @@ const REGIONS = {
         wind_push: 0.3,
         nw_rain_penalty: 0.9, southerly_bight: 0.0, tide_sensitive: 1.0,
         trc_sites: [166, 17], // Urenui + Mangati — Waiwhakaiho is ungauged but correlates
+        rain_gauge: 48,       // TRC rain gauge: Waiwhakaiho at Egmont Village (drains to Back Beach)
         note: "Poor flushing. Heavy stormwater/Waiwhakaiho impact. Pipeline: Oct/Sep best, Jan/Feb worst — inverted vs all other spots. Only good after extended dry calm spells.",
         river: true,
       },
@@ -347,6 +349,7 @@ const REGIONS = {
         nw_rain_penalty: 0.15, southerly_bight: 0.1, tide_sensitive: 0.5,
         plume_reach: 0.2,
         trc_sites: [53, 117], // Waingongoro (closest) + Waitaha
+        rain_gauge: 8,        // TRC rain gauge: Cape Egmont
         note: "West-facing cape. Replica lighthouse (Warea Boat Club) is the landmark. Very exposed to westerly swell but clears quickly after rain with no major river input.",
         river: false,
       },
@@ -371,6 +374,7 @@ const REGIONS = {
         wind_push: 0.4,
         nw_rain_penalty: 0.2, southerly_bight: 0.0, tide_sensitive: 0.4,
         trc_sites: [53, 167], // Waingongoro + Waiokura
+        rain_gauge: 10,       // TRC rain gauge: Kaupokonui at Glenn Rd
         note: "Low papa + rain shadow under NW. Clears fastest after rain. Best fallback when other spots blown out.",
         river: true,
       },
@@ -394,6 +398,7 @@ const REGIONS = {
         wind_push: 0.15,
         nw_rain_penalty: 0.75, southerly_bight: 0.9, tide_sensitive: 0.85,
         trc_sites: [12], // Mangaehu at Huinga — closest to Patea
+        rain_gauge: 27,  // TRC rain gauge: Patea
         note: "Papa + persistently muddy Patea River + bight exposure. Triple threat in bad conditions.",
         river: true,
       },
@@ -418,6 +423,7 @@ const REGIONS = {
         wind_push: 0.5,
         nw_rain_penalty: 0.3, southerly_bight: 0.95, tide_sensitive: 0.2,
         trc_sites: [12], // Mangaehu — same catchment influence
+        rain_gauge: 27,  // TRC rain gauge: Patea
         note: "Clean on calm days. Pipeline: SW/E/S best — Whanganui water floods in on N/NE.",
         river: false,
       },
@@ -442,6 +448,7 @@ const REGIONS = {
         wind_push: 0.6,
         nw_rain_penalty: 0.55, southerly_bight: 0.3, tide_sensitive: 0.2,
         trc_sites: [17, 166], // Mangati + Urenui — Waitara area rivers
+        rain_gauge: 52,       // TRC rain gauge: New Plymouth / Brooklands Zoo
         note: "Reef at 30m. Pipeline: clean water from NE not NW. Waitara runoff impact. Most consistent year-round (60-79% clear).",
         river: true,
       },
@@ -520,7 +527,8 @@ const REGIONS = {
         sw_flush: 0.9, sw_rain_penalty: 0.3, strait_squeeze: 0.7, tide_sensitive: 0.8,
         rain_recovery_days: 2,
         note: "East face of Kāpiti. Pipeline: May-Aug best (76-84%), Jan-Feb worst (41-45%). SW Cook Strait flush drives visibility.",
-        river: false,
+        trc_sites: [1002],  // Otaki River — drains into coast north of Aeroplane Island
+        river: true,
       },
       {
         name: "Tokahaki (North Tip)",
@@ -528,12 +536,12 @@ const REGIONS = {
 
         // Per-spot W (calibrate_per_spot.py, n=546, R2=0.16)
         // Lags: swell:swell_wave_h_d8(+0.46) | wind:wind_v_d19(-0.14) | rain:rain_d1(+0.07)
-        W: { w_swell:0.1, w_wind:0.37, w_rain:0.53,
+        W: { w_swell:0.1, w_wind:0.50, w_rain:0.40,
              sst_warm:14.0, sst_cold:-20.0, river_mult:0.18 },
         lat: -40.819471, lon: 174.946638,
         marine_lat: -40.840, marine_lon: 174.910,
         sat_lat: -40.840, sat_lon: 174.870,
-        shelter: 0.2, river_impact: 0.2, papa_risk: 0.0, swell_exposure: 0.45,
+        shelter: 0.2, river_impact: 0.2, papa_risk: 0.10, swell_exposure: 0.45,  // raised from 0.05 — w_rain=0.40 needs longer window
         dir_exposure: { N:0.2, NE:0.2, E:0.1, SE:0.2, S:0.5, SW:0.7, W:0.9, NW:0.8 },
         depth_m: 15,
         best_wind_dirs: [0, 180, 225],   // N, S, SW
@@ -542,7 +550,8 @@ const REGIONS = {
         sw_flush: 1.0, sw_rain_penalty: 0.2, strait_squeeze: 0.9, tide_sensitive: 1.0,
         rain_recovery_days: 2,
         note: "Most exposed — strongest tidal flushing. Ground truth: 10m vis Feb 28 2026.",
-        river: false,
+        trc_sites: [1001, 1002],  // Waikanae + Otaki — both drain into Kapiti coast
+        river: true,
       },
       {
         name: "Kāpiti West Face",
@@ -550,12 +559,12 @@ const REGIONS = {
 
         // Per-spot W (calibrate_per_spot.py, n=533, R2=0.13)
         // Lags: swell:swell_wave_h_d8(+0.43) | wind:wind_v_d2(-0.17) | rain:rain_d1(+0.19)
-        W: { w_swell:0.1, w_wind:0.31, w_rain:0.59,
+        W: { w_swell:0.1, w_wind:0.45, w_rain:0.45,
              sst_warm:14.0, sst_cold:-20.0, river_mult:0.18 },
         lat: -40.855557, lon: 174.889112,
         marine_lat: -40.860, marine_lon: 174.860,
         sat_lat: -40.860, sat_lon: 174.862,
-        shelter: 0.5, river_impact: 0.5, papa_risk: 0.0, swell_exposure: 0.6,
+        shelter: 0.5, river_impact: 0.5, papa_risk: 0.10, swell_exposure: 0.6,  // raised from 0.05 — w_rain=0.45 needs longer window
         dir_exposure: { N:0.2, NE:0.3, E:0.1, SE:0.3, S:0.6, SW:0.8, W:1.0, NW:0.9 },
         depth_m: 18,
         best_wind_dirs: [225, 270, 315],  // SW, W, NW — pipeline: 100% clear on these dirs
@@ -564,6 +573,7 @@ const REGIONS = {
         sw_flush: 0.4, sw_rain_penalty: 0.5, strait_squeeze: 0.5, tide_sensitive: 0.6,
         rain_recovery_days: 3,
         note: "West face — more Waikanae river influence, less Cook Strait flushing.",
+        trc_sites: [1001],  // Waikanae River — primary influence on west face
         river: true,
       },
     ],
@@ -583,19 +593,26 @@ const REGIONS = {
          cur_north:10.0, cur_south:12.0, bight_mult:8.0, sst_warm:12.0, sst_cold:-15.0,
          tide_mult:0.3, shelter_mult:0.08, river_mult:0.25,
          hist_2_5:0.65, hist_2_0:0.78, hist_1_5:0.90, seasonal_mult:1.0 },
+    // spotSeasonal recalibrated 27 Mar 2026
+    // Source: 379/382 clear S2 SWIR obs (2017-2025) at CORRECTED coords
+    // RGV Reef   annual median NTU=46.3  monthly: Jan27 Feb28 Mar98 Apr93 May40 Jun46 Jul37 Aug100 Sep89 Oct41 Nov26 Dec15
+    // Aquarium   annual median NTU=54.1  monthly: Jan28 Feb47 Mar100 Apr104 May62 Jun55 Jul57 Aug84 Sep68 Oct40 Nov25 Dec14
     spotSeasonal: {
-      "RGV Reef":     {1:+12,2:-5,3:-15,4:-15,5:-8,6:+5,7:+8,8:+8,9:-8,10:+12,11:+12,12:+15},
-      "The Aquarium": {1:+12,2:-3,3:-15,4:-15,5:-5,6:+7,7:+10,8:+10,9:-5,10:+12,11:+13,12:+15},
+      "RGV Reef":     {1:+15,2:+15,3:-15,4:-15,5:+13,6:+0,7:+15,8:-15,9:-15,10:+11,11:+15,12:+15},
+      "The Aquarium": {1:+15,2:+15,3:-15,4:-15,5:-15,6:-2,7:-7,8:-15,9:-15,10:+15,11:+15,12:+15},
     },
+    // seasonalChart: clear% = satellite cloud-free rate, blueIdx = visibility quality 1-10
+    // Derived from 379+382 S2 SWIR obs at corrected coords (27 Mar 2026)
+    // NTU→blueIdx: <20=9, 20-35=8, 35-50=6, 50-70=4, 70-90=2, >90=1
     seasonalChart: [
-      {month:"Jan",clear:72,blueIdx:8},{month:"Feb",clear:45,blueIdx:4},
-      {month:"Mar",clear:18,blueIdx:1},{month:"Apr",clear:20,blueIdx:1},
-      {month:"May",clear:38,blueIdx:3},{month:"Jun",clear:55,blueIdx:5},
-      {month:"Jul",clear:60,blueIdx:6},{month:"Aug",clear:60,blueIdx:6},
-      {month:"Sep",clear:42,blueIdx:3},{month:"Oct",clear:68,blueIdx:7},
-      {month:"Nov",clear:72,blueIdx:8},{month:"Dec",clear:78,blueIdx:9},
+      {month:"Jan",clear:77,blueIdx:8},{month:"Feb",clear:74,blueIdx:7},
+      {month:"Mar",clear:72,blueIdx:1},{month:"Apr",clear:69,blueIdx:1},
+      {month:"May",clear:75,blueIdx:5},{month:"Jun",clear:76,blueIdx:4},
+      {month:"Jul",clear:78,blueIdx:6},{month:"Aug",clear:77,blueIdx:2},
+      {month:"Sep",clear:74,blueIdx:2},{month:"Oct",clear:78,blueIdx:5},
+      {month:"Nov",clear:79,blueIdx:8},{month:"Dec",clear:80,blueIdx:9},
     ],
-    seasonalNote: "10,701 obs · XGBoost R²=0.43 · SST-driven · Mar 2026",
+    seasonalNote: "761 S2 SWIR obs · corrected coords · 2017-2025 · Mar 2026",
     spots: [
       { name:"RGV Reef", spot_type:"swell",
         lat:26.27967, lon:-97.05722, marine_lat:26.27967, marine_lon:-97.05722,
@@ -606,7 +623,7 @@ const REGIONS = {
         best_wind_dirs:[315,0,270], worst_wind_dirs:[90,135,180],
         wind_push:0.6, nw_rain_penalty:0.2, southerly_bight:0.3,
         note:"South Padre Island artificial reef, 20m. Rio Grande plume worst Mar-Apr. Oct-Jan clearest. Warm summer SST stratifies water.",
-        trc_sites:[] },
+        trc_sites:[1003], river: true },  // Rio Grande USGS 08370500
       { name:"The Aquarium", spot_type:"swell",
         lat:26.11067, lon:-96.86487, marine_lat:26.11067, marine_lon:-96.86487,
         weather_lat:26.11067, weather_lon:-96.86487, sat_lat:26.11067, sat_lon:-96.86487,
@@ -616,7 +633,7 @@ const REGIONS = {
         best_wind_dirs:[315,0,270], worst_wind_dirs:[90,135,180],
         wind_push:0.5, nw_rain_penalty:0.15, southerly_bight:0.2,
         note:"SPI dive site, 37m — deeper than RGV Reef, benefits more from SST stratification. Same Rio Grande plume influence Mar-Apr.",
-        trc_sites:[] },
+        trc_sites:[1003], river: true },  // Rio Grande USGS 08370500
     ],
   },
 
@@ -663,7 +680,7 @@ async function scoreSpot(cond, spot, W) {
     return result;
   } catch (err) {
     console.error("[scoreSpot] API error:", err.message);
-    return { score: 50, plumeReach: 0, factors: {} };
+    return { score: 0, plumeReach: 0, factors: { error: err.message } };
   }
 }
 
@@ -681,17 +698,37 @@ function scoreToColor(score) {
 function scoreToLabel(score) {
   if (score >= 80) return "Excellent";
   if (score >= 60) return "Good";
-  if (score >= 40) return "Crays/Paua";
+  if (score >= 40) return "Marginal";
   if (score >= 20) return "Poor";
   return "Not Diveable";
 }
 
-function visLabel(score) {
-  if (score >= 80) return "10m+ 🤿";
-  if (score >= 60) return "5–10m";
-  if (score >= 40) return "3–5m 🦞";
-  if (score >= 20) return "1–3m";
-  return "< 1m";
+// ── Data-driven visibility label ─────────────────────────────────────────────
+// Uses community dive logs to show observed visibility per spot.
+// Returns null if < 3 observations (UI shows nothing).
+function visLabel(score, spotName, entries) {
+  const MIN_OBS = 3;
+  // Normalise spot name for fuzzy matching — handle legacy name variants
+  // e.g. "Nga Motu — Inshore (Back Beach)" matches "Nga Motu — Inshore (Port Taranaki)"
+  const normSpot = (s) => (s ?? "").split(/[—–(]/)[0].trim().toLowerCase();
+  const normTarget = normSpot(spotName);
+  const spotLogs = (entries ?? []).filter(e => {
+    const ov = e.observedVis ?? e.observed_vis ?? 0;
+    const ms = e.modelScore ?? e.model_score ?? 0;
+    const nameMatch = e.spot === spotName || normSpot(e.spot) === normTarget;
+    return nameMatch && ov > 0 && ms > 0;
+  });
+  if (spotLogs.length < MIN_OBS) return null;
+  // Find logs near this score (±20 pts)
+  const nearby = spotLogs.filter(e => Math.abs((e.modelScore ?? e.model_score ?? 0) - score) <= 20);
+  const pool = nearby.length >= MIN_OBS ? nearby : spotLogs;
+  const visSorted = pool.map(e => e.observedVis ?? e.observed_vis).sort((a, b) => a - b);
+  const medVis = visSorted[Math.floor(visSorted.length / 2)];
+  const minVis = visSorted[0];
+  const maxVis = visSorted[visSorted.length - 1];
+  const suffix = nearby.length >= MIN_OBS ? " observed" : " at this spot";
+  if (maxVis - minVis >= 2) return `${minVis.toFixed(0)}–${maxVis.toFixed(0)}m${suffix}`;
+  return `~${medVis.toFixed(0)}m${suffix}`;
 }
 
 function scoreToVis(score) {
@@ -1069,15 +1106,25 @@ function rain48h(times, vals) {
 }
 
 function daysSinceRain(vals) {
+  // Build daily totals by summing hourly precipitation values into 24-hour buckets.
+  // Open-Meteo returns hourly data chronologically (oldest first).
+  // We flush any partial trailing bucket so today's morning rain isn't silently dropped.
   const daily = [];
   let bucket = 0;
   vals.forEach((v, i) => {
     bucket += safe(v);
     if ((i + 1) % 24 === 0) { daily.push(bucket); bucket = 0; }
   });
+  // Flush partial trailing bucket — critical: if it's 9am and 5mm fell this morning,
+  // the final incomplete day (< 24 readings) was previously discarded entirely.
+  if (bucket > 0) daily.push(bucket);
+
+  // Walk backwards from yesterday (daily.length - 2) counting dry days.
+  // Threshold lowered from 5mm to 1mm — 5mm was too forgiving; light showers
+  // (1–4mm) do stir up nearshore papa silt and should reset the streak.
   let days = 0;
   for (let i = daily.length - 2; i >= 0; i--) {
-    if (daily[i] > 5) break;
+    if (daily[i] > 1) break;
     days++;
   }
   return days;
@@ -1169,7 +1216,28 @@ function dailyAvgHistory(times, vals, days = 22) {
   return result;
 }
 
-async function getDailyScores(marine, weather, spot, W) {
+// dailySumHistory — like dailyAvgHistory but SUMS hourly values per day.
+// Use for precipitation: 5mm over 24 hours = 5mm total, not 5/24 = 0.2mm.
+// Averaging hourly rain was understating the signal to score-full by ~24x.
+function dailySumHistory(times, vals, days = 22) {
+  if (!times || !vals || times.length === 0) return Array(days).fill(0);
+  const todayMs = Date.now();
+  const byDay = {};
+  times.forEach((t, i) => {
+    const hrs = (todayMs - new Date(t).getTime()) / 3600000;
+    if (hrs < 0 || hrs > days * 24) return;
+    const dayAgo = Math.floor(hrs / 24);
+    const v = typeof vals[i] === "number" && !isNaN(vals[i]) ? vals[i] : 0;
+    byDay[dayAgo] = (byDay[dayAgo] ?? 0) + v;
+  });
+  const result = [];
+  for (let d = 0; d < days; d++) {
+    result.push(byDay[d] ?? 0);
+  }
+  return result;
+}
+
+async function getDailyScores(marine, weather, spot, W, region) {
   const mTimes = marine?.hourly?.time ?? [];
   const wTimes = weather?.hourly?.time ?? [];
 
@@ -1317,7 +1385,9 @@ async function getDailyScores(marine, weather, spot, W) {
       hist22: buildHist22ForDate(dateIdx),  // per-day shifted history for ONNX
       _forecastDate:   date,  // ensures cache key is unique per forecast day
     };
-    const { score, factors } = await scoreSpot(cond, spot, W);
+    const { score: rawForecastScore, factors } = await scoreSpot(cond, spot, W);
+    // Seasonal delta removed — score is purely physics-based
+    const score = rawForecastScore;
     return { date, score, factors, cond };
   }));
 }
@@ -1351,9 +1421,9 @@ function getAdvice(cond, results, region = "taranaki") {
   const best = results[0];
   const tips = [];
 
-  if (best.score >= 80) tips.push({ e: "🤿", t: `Excellent — 10m+ vis expected at ${best.spot.name}. Get in the water.` });
-  else if (best.score >= 60) tips.push({ e: "🐟", t: `Good spearfishing vis (5–10m) at ${best.spot.name}. Worth the dive.` });
-  else if (best.score >= 40) tips.push({ e: "🦞", t: `Crays/paua conditions only (3–5m) at ${best.spot.name}. Not great for spearing.` });
+  if (best.score >= 80) tips.push({ e: "🤿", t: `Excellent conditions at ${best.spot.name}. Get in the water.` });
+  else if (best.score >= 60) tips.push({ e: "🐟", t: `Good spearfishing conditions at ${best.spot.name}. Worth the dive.` });
+  else if (best.score >= 40) tips.push({ e: "🦞", t: `Marginal conditions at ${best.spot.name}. Marginal conditions.` });
   else tips.push({ e: "🚫", t: "Under 3m across all spots — not worth diving. Wait for conditions to settle." });
 
   // Wind direction advice — uses best spot's pipeline-calibrated dirs
@@ -1461,11 +1531,14 @@ function useCommunityLogs() {
 }
 
 function spotBiasMultiplier(spotName, entries) {
+  const normSpotB = (s) => (s ?? "").split(/[—–(]/)[0].trim().toLowerCase();
+  const normTargetB = normSpotB(spotName);
   const spotEntries = entries
     .filter(e => {
       const ms = e.modelScore ?? e.model_score ?? 0;
       const ov = e.observedVis ?? e.observed_vis ?? 0;
-      return e.spot === spotName && ms > 0 && ov > 0;
+      const nameMatch = e.spot === spotName || normSpotB(e.spot) === normTargetB;
+      return nameMatch && ms > 0 && ov > 0;
     })
     .slice(0, 20);
   if (spotEntries.length < 2) return 1.0;
@@ -1513,12 +1586,18 @@ async function fetchOceanCurrent() {
 // rather than just estimated rain-based impact.
 
 const TRC_RIVER_SITES = {
+  // TRC (Taranaki) — FNU turbidity
   12:  "Mangaehu at Huinga",
   17:  "Mangati at SH3",
   53:  "Waingongoro at SH45",
   117: "Waitaha at SH3",
   166: "Urenui at Okoki Rd",
   167: "Waiokura at No3 Fairway",
+  // GWRC (Kāpiti) — Flow proxy (IDs 1000+)
+  1001: "Waikanae River at WTP",
+  1002: "Otaki River at Pukehinau",
+  // USGS (SPI) — Flow proxy (IDs 1000+)
+  1003: "Rio Grande at Rio Grande City",
 };
 
 // FNU → normalised turbidity score (0=crystal, 100=chocolate milk)
@@ -1543,7 +1622,8 @@ async function fetchTRCRiverData() {
   if (!res.ok) throw new Error(`TRC proxy HTTP ${res.status}`);
   const json = await res.json();
   if (!json.ok) throw new Error(json.error || "TRC proxy error");
-  return json.sites; // { [siteId]: { name, latestFNU, latestTime, trend, recentMax, recentAvg, sparkline } }
+  // Return both FNU sites and rain gauge data
+  return { sites: json.sites, rain: json.rain ?? {} };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1568,6 +1648,11 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   const [riverStatus, setRiverStatus] = useState("idle");
   const riverRef = useRef({});
 
+  // TRC rain gauge data — ground-truth daily rain totals per coastal gauge
+  // { [siteId]: { dailyRain, rain_24h, rain_48h, rain_72h, rain_7d, days_since_rain } }
+  const [rainData, setRainData] = useState({});
+  const rainRef = useRef({});
+
   // ── Per-spot scored data ─────────────────────────────────────────────────
   const [spotDataMap, setSpotDataMap]     = useState({});
   const [loading, setLoading]             = useState(true);
@@ -1580,6 +1665,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   useEffect(() => { satRef.current = satData; }, [satData]);
   useEffect(() => { webcamRef.current = webcamData; }, [webcamData]);
   useEffect(() => { riverRef.current  = riverData;  }, [riverData]);
+  useEffect(() => { rainRef.current   = rainData;   }, [rainData]);
 
   const computeSpotResult = useCallback(async (spot, marine, weather, rtofs, entries) => {
     const mTimes = marine.hourly?.time ?? [];
@@ -1587,8 +1673,22 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     const mIdx = nowIdx(mTimes);
     const wIdx = nowIdx(wTimes);
 
-    const r48  = rain48h(wTimes, weather.hourly?.precipitation ?? []);
-    const dsr  = daysSinceRain(weather.hourly?.precipitation ?? []);
+    // ── TRC rain gauge override ───────────────────────────────────────────────
+    // Use ground-truth rain from TRC gauge if this spot has one assigned.
+    // Open-Meteo's offshore/coastal grid cells miss most Taranaki rain events
+    // (e.g. 33mm at New Plymouth gauge showed as 0.1mm in Open-Meteo).
+    // Falls back to Open-Meteo if gauge data hasn't loaded yet.
+    const gaugeRain = spot.rain_gauge ? rainRef.current?.[spot.rain_gauge] : null;
+    if (gaugeRain) {
+      console.log(`[TRC Rain] ${spot.name}: using gauge ${spot.rain_gauge} — 48h=${gaugeRain.rain_48h}mm dsr=${gaugeRain.days_since_rain}`);
+    }
+
+    const r48 = gaugeRain ? gaugeRain.rain_48h : rain48h(wTimes, weather.hourly?.precipitation ?? []);
+    const dsr = gaugeRain ? gaugeRain.days_since_rain : daysSinceRain(weather.hourly?.precipitation ?? []);
+    // Gauge dailyRain[0..13] padded to 22 entries for hist22
+    const gaugeHist22Rain = gaugeRain
+      ? [...gaugeRain.dailyRain, ...Array(8).fill(0)].slice(0, 22)
+      : null;
     const hist = maxSwellPast(mTimes, marine.hourly?.wave_height ?? [], 72);
     const rainHist  = dailyRainHistory(wTimes, weather.hourly?.precipitation ?? [], 14);
     const swellHist = dailySwellHistory(mTimes, marine.hourly?.wave_height ?? [], 7);
@@ -1603,7 +1703,9 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
       wind_spd:     dailyAvgHistory(wTimes, weather.hourly?.wind_speed_10m ?? [], 22),
       wind_dir:     dailyAvgHistory(wTimes, weather.hourly?.wind_direction_10m ?? [], 22),
       sst:          dailyAvgHistory(mTimes, marine.hourly?.sea_surface_temperature ?? [], 22),
-      rain:         dailyAvgHistory(wTimes, weather.hourly?.precipitation ?? [], 22),
+      // Prefer TRC gauge daily rain totals — Open-Meteo offshore grid underestimates
+      // coastal NZ rain by ~10-30x. Fall back to summed hourly if no gauge assigned.
+      rain: gaugeHist22Rain ?? dailySumHistory(wTimes, weather.hourly?.precipitation ?? [], 22),
     };
 
     const condBase = condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist);
@@ -1615,7 +1717,10 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     // CHANGE 2: Pull satellite turbidity for this spot if available
     const satSpot = satRef.current?.[spot.name];
     const satOverride = satSpot
-      ? { satTurbidity: satSpot.turbidity, satTurbidityAge: satSpot.agedays }
+      // FIX: renamed satTurbidityAge → satDataAge to match score-full's expected key name.
+      // score-full checks cond.satDataAge for the rain suppression logic; sending
+      // satTurbidityAge meant it always saw undefined → suppression never fired.
+      ? { satTurbidity: satSpot.turbidity, satDataAge: satSpot.agedays }
       : {};
 
     // Webcam turbidity for this spot if available
@@ -1636,11 +1741,24 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
         const maxFNU = Math.max(...sites.map(s => s.recentMax ?? s.latestFNU ?? 0));
         // Rising trend amplifies impact (river hasn't peaked yet)
         const trendFactor = sites[0].trend > 5 ? 1.3 : sites[0].trend > 1 ? 1.1 : 1.0;
+        // Build structured riverFlows for lookup table scorer (GWRC sites only)
+        const riverFlowsMap = {};
+        spot.trc_sites.forEach(id => {
+          const siteData = riverRef.current[id];
+          if (siteData?.source === "gwrc_flow" && siteData?.latestFlow != null) {
+            const gaugeId = id === 1001 ? "WAIKANAE_WTP"
+                          : id === 1002 ? "OTAKI_PUKEHINAU"
+                          : id === 1003 ? "WAITOHU_WS"
+                          : null;
+            if (gaugeId) riverFlowsMap[gaugeId] = [siteData.latestFlow, siteData.latestFlow];
+          }
+        });
         riverOverride = {
           riverFNU: weightedFNU,
           riverMaxFNU: maxFNU,
           riverTrendFactor: trendFactor,
           riverTurbScore: fnuToScore(weightedFNU * trendFactor),
+          ...(Object.keys(riverFlowsMap).length > 0 ? { riverFlows: riverFlowsMap } : {}),
         };
       }
     }
@@ -1659,12 +1777,36 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     const { score: rawScore, factors, plumeReach } = await scoreSpot(cond, spot, W);
 
     const biasMult = spotBiasMultiplier(spot.name, entries || []);
-    let score = applyBias(rawScore, biasMult);
+    // FIX: bias correction disabled for lookup-v2 scoring system.
+    // All stored model_score values in dive logs were recorded under the old W-block
+    // formula which produces completely different raw scores. Applying those ratios
+    // to lookup-v2 output corrupts the score (e.g. seed log model_score=100 vs
+    // lookup-v2 returning ~50 → multiplier pulls score down by ~30pts incorrectly).
+    // Re-enable once 10+ lookup-v2 dives are logged per spot.
+    // To re-enable: change the line below back to: let score = applyBias(rawScore, biasMult);
+    let score = rawScore; // applyBias disabled — lookup-v2 transition period
 
-    const forecast = await getDailyScores(marine, weather, spot, W);
+    // Seasonal delta removed — lookup table scoring already encodes seasonal patterns
+    // through training on satellite observations. Adding spotSeasonal on top was masking
+    // real condition changes. Score is now purely physics-based.
+    const REGION_DATA = REGIONS[region];
+    const month = new Date().getMonth() + 1;
+    const seasonalDeltas = REGION_DATA?.spotSeasonal?.[spot.name];
+    const seasonalDelta  = 0; // disabled
+
+    const forecast = await getDailyScores(marine, weather, spot, W, region);
+
+    // Replace forecast[0] (today) with the live score so gauge and
+    // forecast bar always agree. The live score has all real-time
+    // overlays applied (satellite, river, RTOFS, bias) that the
+    // daily forecast path lacks.
+    if (forecast.length > 0) {
+      forecast[0] = { ...forecast[0], score };
+    }
 
     return {
       cond, score, rawScore, factors, forecast, biasMult,
+      seasonalDelta,
       plumeReach: plumeReach ?? 0,
       satData: satRef.current?.[spot.name] ?? null,
       webcamData: webcamRef.current?.[spot.name] ?? null,
@@ -1790,26 +1932,48 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
               // Bands 7-2-1 turbidity: in this composite, band 7 (SWIR 2.1µm)
               // maps to the RED channel. High red = high suspended sediment.
               // Band 2 (NIR 0.86µm) maps to GREEN. Band 1 (red 0.65µm) maps to BLUE.
-              // We use normalised red fraction as the sediment index — this is
-              // essentially a SWIR-based NDTI analogue, robust to sun glint and
-              // atmospheric haze which mostly affect visible wavelengths.
+              // SWIR fraction is a sediment proxy robust to sun glint and atmosphere.
+              //
+              // REGIONAL CALIBRATION:
+              //   Taranaki: volcanic silt, shallow water — SWIR responds strongly
+              //             baseline=0.18, max=0.60
+              //   Kāpiti/Cook Strait: deep water (200m+), fine marine sediment
+              //             SWIR response is naturally lower per unit turbidity
+              //             baseline=0.22, max=0.55
+              //             Also require swirFrac > 0.24 before trusting B721
+              //             (below this, deep-water optical properties dominate)
+              //   SPI (Gulf of Mexico): high CDOM, different sediment — use Taranaki defaults
+              // Regional SWIR calibration derived from S2 pipeline data (Mar 2026):
+              //   Taranaki: volcanic silt, shallow (5-20m), high SWIR response
+              //             322 obs: clear-water b05=0.230, turbid b05=0.547
+              //   Kāpiti/Cook Strait: deep water (200m+), fine marine sediment
+              //             610 obs: clear-water b05=0.139, turbid b05=0.627
+              //             S2 clear-water SWIR is 0.60x Taranaki → lower MODIS baseline
+              //             March median NTU=28 maps to swirFrac~0.19 → baseline=0.16, max=0.50
+              const isKapiti = ["Aeroplane Island","Tokahaki (North Tip)","Kāpiti West Face"].includes(s.name);
+              const swirBaseline  = isKapiti ? 0.16 : 0.18;  // 0-NTU floor
+              const swirMax       = isKapiti ? 0.50 : 0.60;  // 100-NTU ceiling
+              const swirMinSignal = isKapiti ? 0.18 : 0.20;  // below this, noise dominates
+
               const { r, g, b } = b721;
               const total = r + g + b;
-              if (total > 30) {  // >10 allows near-black garbage through; require meaningful signal
-                const swirFraction  = r / total;   // band 7 SWIR — sediment proxy
-                const nirFraction   = g / total;   // band 2 NIR
-                const redFraction   = b / total;   // band 1 red
-                // Clear water: swirFraction low (~0.20), nirFraction moderate
-                // Turbid/sediment: swirFraction high (0.45–0.70)
-                // Scale 0.20–0.65 range to 0–100
-                const raw = (swirFraction - 0.18) / (0.60 - 0.18) * 100;
-                turbidity = Math.min(100, Math.max(0, Math.round(raw)));
-                turbiditySource = "bands721";
-                if (turbidity > 0) console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
+              if (total > 30) {
+                const swirFraction = r / total;
+                if (swirFraction >= swirMinSignal) {
+                  // Signal is meaningful — use B721
+                  const raw = (swirFraction - swirBaseline) / (swirMax - swirBaseline) * 100;
+                  turbidity = Math.min(100, Math.max(0, Math.round(raw)));
+                  turbiditySource = "bands721";
+                  console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
+                } else {
+                  // swirFrac below minimum signal threshold — B721 not reliable here
+                  // Fall through to TrueColor
+                  console.log(`[Satellite B721] ${s.name}: swirFrac=${swirFraction.toFixed(3)} below min signal (${swirMinSignal}) — using TrueColor fallback`);
+                }
               }
             }
 
-            // Fall back to TrueColor turbidity if Bands721 pixel was rejected
+            // Fall back to TrueColor turbidity if B721 was rejected or below signal threshold
             if (turbidity === null && tc?.turbidity != null) {
               turbidity = tc.turbidity;
               turbiditySource = "truecolor";
@@ -1987,11 +2151,19 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
         setRiverStatus("loading");
         riverPromise = (async () => {
           try {
-            const sites = await fetchTRCRiverData();
-            if (sites && !cancelled) {
+            const result = await fetchTRCRiverData();
+            if (result && !cancelled) {
+              const sites = result.sites ?? result; // backward compat if old format
+              const rain  = result.rain ?? {};
               riverRef.current = sites;
+              rainRef.current  = rain;
               setRiverData(sites);
-              setRiverStatus("ok");
+              setRainData(rain);
+              setRiverStatus(Object.keys(sites).length > 0 ? "ok" : "no-data");
+              if (Object.keys(rain).length > 0) {
+                console.log("[TRC Rain] Loaded gauges:", Object.entries(rain).map(([id, r]) =>
+                  `site${id}=${r.rain_48h}mm/48h dsr=${r.days_since_rain}`).join(", "));
+              }
             } else if (!cancelled) {
               setRiverStatus("no-data");
             }
@@ -2400,7 +2572,8 @@ function DiveLogModal({ spot, modelScore, onSave, onClose, diverName, onCommunit
 // ── Spot history mini-panel ───────────────────────────────────────────────────
 
 function SpotHistory({ spotName, entries }) {
-  const spotEntries = entries.filter(e => e.spot === spotName).slice(0, 3);
+  const normSpotH = (s) => (s ?? "").split(/[—–(]/)[0].trim().toLowerCase();
+  const spotEntries = entries.filter(e => e.spot === spotName || normSpotH(e.spot) === normSpotH(spotName)).slice(0, 3);
   if (spotEntries.length === 0) return null;
 
   const bias = spotBiasMultiplier(spotName, entries);
@@ -2490,7 +2663,9 @@ function SpotCard({ spot, data, error, currentData, logEntries, onLogUpdate, com
           </div>
 
           <div className="viz-label" style={{ color }}>
-            {visLabel(score)}
+            {visLabel(score, spot.name, logEntries) && (
+              <span>{visLabel(score, spot.name, logEntries)}</span>
+            )}
             {data.biasMult && Math.abs(data.biasMult - 1.0) >= 0.05 && (
               <span className="bias-indicator" title={`Bias-adjusted from raw score ${data.rawScore}`}>
                 {data.biasMult > 1 ? " ↑" : " ↓"} adj
@@ -2676,7 +2851,7 @@ function BestDayPanel({ spotDataMap }) {
         <div className="best-day-title">Best Dive Day This Week</div>
         <div className="best-day-date" style={{ color }}>{dayLabel} · {dateStr}</div>
         <div className="best-day-avg">
-          Avg score: <strong style={{ color }}>{avgScore}</strong> · {scoreToLabel(avgScore)} · {visLabel(avgScore)} est.
+          Avg score: <strong style={{ color }}>{avgScore}</strong> · {scoreToLabel(avgScore)}
         </div>
         <div className="best-day-spots">
           {info.spots.sort((a, b) => b.score - a.score).map(s => (
@@ -2730,7 +2905,7 @@ function Legend() {
       {[
         { label: "Excellent", sub: "10m+", color: "#00e5a0" },
         { label: "Good", sub: "5–10m", color: "#7dd64f" },
-        { label: "Crays/Paua", sub: "3–5m", color: "#f0a030" },
+        { label: "Marginal", sub: "", color: "#f0a030" },
         { label: "Poor", sub: "1–3m", color: "#f07040" },
         { label: "Not Diveable", sub: "< 1m", color: "#e03030" },
       ].map(i => (
@@ -2815,7 +2990,7 @@ function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, map
       const score   = scoresArg[spot.name] ?? null;
       const color   = score != null ? scoreToColor(score) : "#607d8b";
       const label   = score != null ? scoreToLabel(score) : "Loading…";
-      const vis     = score != null ? visLabel(score) : "";
+      const vis     = ""; // visibility label removed from map — data-driven only
       const size    = 38;
 
       const svg = `
