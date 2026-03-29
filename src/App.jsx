@@ -1238,9 +1238,20 @@ function dailySumHistory(times, vals, days = 22) {
   return result;
 }
 
-async function getDailyScores(marine, weather, spot, W, region) {
+async function getDailyScores(marine, weather, spot, W, region, gaugeRain = null) {
   const mTimes = marine?.hourly?.time ?? [];
   const wTimes = weather?.hourly?.time ?? [];
+  // If we have gauge rain, build a date-keyed map of daily totals to override
+  // Open-Meteo precipitation. gaugeRain.dailyRain[0]=today, [1]=yesterday etc.
+  const gaugeDailyMap = {};
+  if (gaugeRain?.dailyRain) {
+    const NZT_OFFSET = 13 * 3600 * 1000;
+    const todayMs = new Date(new Date(Date.now() + NZT_OFFSET).toISOString().split("T")[0]).getTime();
+    gaugeRain.dailyRain.forEach((mm, i) => {
+      const key = new Date(todayMs - i * 86400000).toISOString().split("T")[0];
+      gaugeDailyMap[key] = mm;
+    });
+  }
 
   const mByDate = {};
   mTimes.forEach((t, i) => {
@@ -1290,7 +1301,10 @@ async function getDailyScores(marine, weather, spot, W, region) {
   allDates.forEach(d => {
     const w = wByDate[d];
     const m = mByDate[d];
-    dailyRainMap[d]     = w ? sum(w.precip) : 0;
+    // Prefer TRC gauge rain over Open-Meteo — gauge is ground truth for past days,
+    // Open-Meteo is still used for future forecast days (gauge has no forecast).
+    const gaugeVal = gaugeDailyMap[d];
+    dailyRainMap[d]     = gaugeVal != null ? gaugeVal : (w ? sum(w.precip) : 0);
     dailySwellMaxMap[d] = m ? Math.max(...m.waveH, 0) : 0;
     dailySwellAvgMap[d] = m ? avg(m.waveH) : 0;
     dailySwellPMap[d]   = m ? avg(m.waveP) : 0;
@@ -1792,7 +1806,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     const seasonalDeltas = REGION_DATA?.spotSeasonal?.[spot.name];
     const seasonalDelta  = 0; // disabled
 
-    const forecast = await getDailyScores(marine, weather, spot, W, region);
+    const forecast = await getDailyScores(marine, weather, spot, W, region, gaugeRain);
 
     // Replace forecast[0] (today) with the live score so gauge and
     // forecast bar always agree. The live score has all real-time
