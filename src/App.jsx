@@ -662,7 +662,8 @@ const _scoreCache = new Map();
 async function scoreSpot(cond, spot, W) {
   // Cache key: spot + date (for forecast) or current 15min bucket (for today)
   const dateKey = cond._forecastDate ?? Math.floor(Date.now() / 900000);
-  const key = `${spot.name}:${dateKey}`;
+const rainKey = cond.rain_48h?.toFixed(1) ?? "0";
+const key = `${spot.name}:${dateKey}:${rainKey}`;
   if (_scoreCache.has(key)) return _scoreCache.get(key);
 
   try {
