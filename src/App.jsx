@@ -1842,6 +1842,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   useEffect(() => { rescoreAll(); }, [webcamData, rescoreAll]);
   // Rescore when river data arrives
   useEffect(() => { rescoreAll(); }, [riverData, rescoreAll]);
+useEffect(() => { rescoreAll(); }, [rainData, rescoreAll]);
 
   useEffect(() => {
     let cancelled = false;
