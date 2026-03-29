@@ -3,7 +3,9 @@
   publish = "dist"
 
 [functions]
+  directory = "netlify/functions"
   node_bundler = "esbuild"
+```
 
 # Function routes must be matched before the SPA catch-all
 [[redirects]]
