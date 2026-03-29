@@ -657,14 +657,29 @@ const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-
 const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MjA3MzgsImV4cCI6MjA4ODA5NjczOH0.vk_ylXl3wny0NjIUD9D89324muA74bXx3Mg6Syq8yMA";
 
 // In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
+// Build timestamp — update this string on each deploy to bust the in-memory score cache.
+// Prevents users with open tabs seeing stale scores after a new version is deployed.
+// The 15-minute TTL (CACHE_TTL_MS) also auto-expires entries on a rolling basis.
+const BUILD_TS = "2026-03-30T18:10Z";
+
+// Score cache: keyed by BUILD_TS + spot + time-bucket + rain_48h
+// BUILD_TS prefix ensures cache is busted on every deploy (open tabs see new scores).
+// Time-bucket (15min) prevents duplicate API calls within the same render cycle.
 const _scoreCache = new Map();
+const _scoreCacheTime = new Map(); // tracks when each entry was cached (ms)
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes — auto-expire stale entries
 
 async function scoreSpot(cond, spot, W) {
   // Cache key: spot + date (for forecast) or current 15min bucket (for today)
   const dateKey = cond._forecastDate ?? Math.floor(Date.now() / 900000);
 const rainKey = cond.rain_48h?.toFixed(1) ?? "0";
-const key = `${spot.name}:${dateKey}:${rainKey}`;
-  if (_scoreCache.has(key)) return _scoreCache.get(key);
+const key = `${BUILD_TS}:${spot.name}:${dateKey}:${rainKey}`;
+  if (_scoreCache.has(key)) {
+    const age = Date.now() - (_scoreCacheTime.get(key) ?? 0);
+    if (age < CACHE_TTL_MS) return _scoreCache.get(key);
+    _scoreCache.delete(key); // expired — fall through to fresh API call
+    _scoreCacheTime.delete(key);
+  }
 
   try {
     const res = await fetch(SCORE_API, {
@@ -678,6 +693,7 @@ const key = `${spot.name}:${dateKey}:${rainKey}`;
     if (!res.ok) throw new Error(`Score API ${res.status}`);
     const result = await res.json();
     _scoreCache.set(key, result);
+    _scoreCacheTime.set(key, Date.now());
     return result;
   } catch (err) {
     console.error("[scoreSpot] API error:", err.message);
@@ -2937,6 +2953,7 @@ function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, map
   const mapInstanceRef = useRef(null);
   const markersRef     = useRef([]);
   const layersRef      = useRef({});
+  const spotScoresRef  = useRef({});  // always-current ref for use in async initMap closure
 
   const [activeLayer,  setActiveLayer]  = useState("satellite");
   const [layerDates,   setLayerDates]   = useState({
@@ -2991,6 +3008,9 @@ function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, map
     }
     return dateStrNDaysAgo(3);
   }
+
+  // Keep ref in sync so initMap closure always reads latest scores
+  useEffect(() => { spotScoresRef.current = spotScores; }, [spotScores]);
 
   function buildMarkers(map, L, scoresArg) {
     markersRef.current.forEach(m => m.remove());
@@ -3070,7 +3090,15 @@ function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, map
     satellite.addTo(map);
     labels.addTo(map);
 
-    buildMarkers(map, L, spotScores);
+    // Use ref not closure value — scores may not have arrived when initMap runs
+    buildMarkers(map, L, spotScoresRef.current);
+    // Re-build once more after a short delay in case scores arrived during
+    // the async findLastClearDate wait
+    setTimeout(() => {
+      if (mapInstanceRef.current && window.L) {
+        buildMarkers(mapInstanceRef.current, window.L, spotScoresRef.current);
+      }
+    }, 3000);
   }
 
   useEffect(() => {
@@ -3945,8 +3973,13 @@ export default function App() {
     } catch(e) { return "taranaki"; }
   });
   const REGION = REGIONS[region];
-  const SPOTS = REGION.spots;
-  const W = REGION.W;
+  // MUST be memoized — useAllSpotsData depends on [SPOTS].
+  // Without useMemo, every render creates a new SPOTS array reference,
+  // triggering the fetchAll useEffect cleanup (cancelled=true) on every render
+  // and killing all in-flight Open-Meteo fetches before they complete.
+  // This was causing rawApiRef to always be empty and score-full to never be called.
+  const SPOTS = useMemo(() => REGION.spots, [region]);
+  const W = useMemo(() => REGION.W, [region]);
 
   useEffect(() => {
     try {
