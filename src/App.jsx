@@ -1959,12 +1959,15 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
               const total = r + g + b;
               if (total > 30) {
                 const swirFraction = r / total;
-                if (swirFraction >= swirMinSignal) {
-                  // Signal is meaningful — use B721
-                  const raw = (swirFraction - swirBaseline) / (swirMax - swirBaseline) * 100;
-                  turbidity = Math.min(100, Math.max(0, Math.round(raw)));
-                  turbiditySource = "bands721";
-                  console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
+
+if (swirFraction >= swirMinSignal) {
+  const raw = (swirFraction - swirBaseline) / (swirMax - swirBaseline) * 100;
+  const b721Turbidity = Math.min(100, Math.max(0, Math.round(raw)));
+  const tcTurbidity = tc?.turbidity ?? 0;
+  turbidity = Math.max(b721Turbidity, tcTurbidity);
+  turbiditySource = b721Turbidity >= tcTurbidity ? "bands721" : "bands721+tc";
+  console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} B721=${b721Turbidity} TC=${tcTurbidity} → turbidity=${turbidity} (${turbiditySource})`);
+
                 } else {
                   // swirFrac below minimum signal threshold — B721 not reliable here
                   // Fall through to TrueColor
