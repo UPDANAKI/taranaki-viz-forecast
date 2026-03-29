@@ -26,7 +26,7 @@ const TIME_PERIOD = "2days";  // 2 days of 5-min readings — trend + latest
 //   Site 10 (Kaupokonui at Glenn Rd)        → Opunake
 //   Site 27 (Patea)                         → Patea Inshore, Patea Offshore Trap
 const TRC_RAIN_MEASURE = 1;
-const RAIN_TIME_PERIOD = "14days"; // for direct TRC fallback only
+const RAIN_TIME_PERIOD = "30days"; // TRC valid values: 7days, 30days, 365days
 
 const TRC_RAIN_SITES = {
   52: { name: "New Plymouth (Brooklands Zoo)",     coast: "north",  region: "taranaki" },
@@ -235,12 +235,15 @@ async function fetchRainFromSupabase(siteId, days = 30) {
   const rows = await res.json();
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
-  // Check freshness — if newest row is more than 8 days old, fall back to TRC direct
+  // Check freshness — if newest row is more than 36 hours old, fall back to TRC direct.
+  // Rain events can happen any day — a weekly ingest means mid-week rain is invisible.
+  // 36h threshold ensures yesterday's rain is always captured; today's partial day
+  // comes from TRC direct fallback which sums hourly buckets.
   const newestDate = rows[0].date;
   const newestMs   = new Date(newestDate).getTime();
   const ageHours   = (Date.now() - newestMs) / 3600000;
-  if (ageHours > 8 * 24) {
-    console.log(`[Rain] Supabase site ${siteId} newest row ${newestDate} is ${Math.round(ageHours/24)}d old — falling back to TRC direct`);
+  if (ageHours > 36) {
+    console.log(`[Rain] Supabase site ${siteId} newest row ${newestDate} is ${Math.round(ageHours)}h old (>36h) — falling back to TRC direct`);
     return null;
   }
 
