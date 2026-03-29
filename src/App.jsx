@@ -1680,7 +1680,8 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   useEffect(() => { satRef.current = satData; }, [satData]);
   useEffect(() => { webcamRef.current = webcamData; }, [webcamData]);
   useEffect(() => { riverRef.current  = riverData;  }, [riverData]);
-  useEffect(() => { rainRef.current   = rainData;   }, [rainData]);
+  // rainRef.current is set directly in fetchTRCRiverData (not via useEffect)
+  // to avoid the race where rescoreAll fires before the ref sync effect runs.
 
   const computeSpotResult = useCallback(async (spot, marine, weather, rtofs, entries) => {
     const mTimes = marine.hourly?.time ?? [];
@@ -1853,8 +1854,9 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   // Rescore when webcam data arrives
   useEffect(() => { rescoreAll(); }, [webcamData, rescoreAll]);
   // Rescore when river data arrives
+  // NOTE: rain rescore is called directly in fetchTRCRiverData (not via useEffect)
+  // to guarantee rainRef.current is populated before rescoreAll reads it.
   useEffect(() => { rescoreAll(); }, [riverData, rescoreAll]);
-useEffect(() => { rescoreAll(); }, [rainData, rescoreAll]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2156,8 +2158,11 @@ if (swirFraction >= swirMinSignal) {
             if (result && !cancelled) {
               const sites = result.sites ?? result; // backward compat if old format
               const rain  = result.rain ?? {};
+              // Set refs FIRST before any state updates — guarantees computeSpotResult
+              // always reads current gauge rain regardless of React effect scheduling order.
               riverRef.current = sites;
               rainRef.current  = rain;
+              // Update UI state
               setRiverData(sites);
               setRainData(rain);
               setRiverStatus(Object.keys(sites).length > 0 ? "ok" : "no-data");
@@ -2165,6 +2170,10 @@ if (swirFraction >= swirMinSignal) {
                 console.log("[TRC Rain] Loaded gauges:", Object.entries(rain).map(([id, r]) =>
                   `site${id}=${r.rain_48h}mm/48h dsr=${r.days_since_rain}`).join(", "));
               }
+              // Rescore directly now refs are guaranteed current — do NOT rely on
+              // the [rainData] useEffect trigger which may fire after other rescores
+              // that read a stale rainRef.
+              await rescoreAll();
             } else if (!cancelled) {
               setRiverStatus("no-data");
             }
