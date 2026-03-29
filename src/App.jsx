@@ -1844,17 +1844,22 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
 
   const rawApiRef = useRef({});
 
-  const rescoreAll = useCallback(async () => {
+  const rescoreAll = useCallback(async (trigger = "unknown") => {
     const raw = rawApiRef.current;
     if (Object.keys(raw).length === 0) return;
 
     const rtofs = currentRef.current;
+    const rainKeys = Object.keys(rainRef.current ?? {});
+    console.log(`[rescoreAll] trigger=${trigger} rain=${rainKeys.length > 0 ? rainKeys.map(k => `${k}:${rainRef.current[k]?.rain_48h}mm`).join(",") : "EMPTY"}`);
 
     await Promise.all(SPOTS.map(async (spot) => {
       const api = raw[spot.name];
       if (!api) return;
       try {
         const result = await computeSpotResult(spot, api.marine, api.weather, rtofs, logEntries);
+        if (spot.name.includes("Fin")) {
+          console.log(`[rescoreAll:${trigger}] Fin Fuckers → score=${result.score} rain_48h=${result.cond?.rain_48h} dsr=${result.cond?.days_since_rain}`);
+        }
         setSpotDataMap(prev => ({ ...prev, [spot.name]: result }));
       } catch(e) {
         console.error(`[rescoreAll] ${spot.name}:`, e.message);
@@ -1863,16 +1868,16 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   }, [logEntries, computeSpotResult]);
 
   // Rescore when ocean data arrives (RTOFS)
-  useEffect(() => { rescoreAll(); }, [currentData, logEntries, rescoreAll]);
+  useEffect(() => { rescoreAll("currentData/logEntries"); }, [currentData, logEntries, rescoreAll]);
 
   // CHANGE 3: Rescore when satellite turbidity arrives
-  useEffect(() => { rescoreAll(); }, [satData, rescoreAll]);
+  useEffect(() => { rescoreAll("satData"); }, [satData, rescoreAll]);
   // Rescore when webcam data arrives
-  useEffect(() => { rescoreAll(); }, [webcamData, rescoreAll]);
+  useEffect(() => { rescoreAll("webcamData"); }, [webcamData, rescoreAll]);
   // Rescore when river data arrives
   // NOTE: rain rescore is called directly in fetchTRCRiverData (not via useEffect)
   // to guarantee rainRef.current is populated before rescoreAll reads it.
-  useEffect(() => { rescoreAll(); }, [riverData, rescoreAll]);
+  useEffect(() => { rescoreAll("riverData"); }, [riverData, rescoreAll]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2189,7 +2194,7 @@ if (swirFraction >= swirMinSignal) {
               // Rescore directly now refs are guaranteed current — do NOT rely on
               // the [rainData] useEffect trigger which may fire after other rescores
               // that read a stale rainRef.
-              await rescoreAll();
+              await rescoreAll("rainData");
             } else if (!cancelled) {
               setRiverStatus("no-data");
             }
