@@ -216,7 +216,7 @@ async function fetchGWRCSite(siteId) {
 // Anon key is safe here — river_rain_daily has public read RLS policy.
 // Write access (ingest) uses service role key from local trc-rain-ingest.mjs.
 const SUPABASE_URL = "https://mgcwrktuplnjtxkbsypc.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
+const SUPABASE_KEY ="sb_publishable_VK8zOGEHVbqJ0cdkFIhAnQ_drXLJgIs";
 
 // ── Read rain history from Supabase (accumulated multi-year store) ────────────
 // Returns null if table is empty or Supabase unreachable (triggers TRC fallback)
