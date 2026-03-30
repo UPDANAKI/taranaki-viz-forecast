@@ -1,40 +1,21 @@
 // netlify/functions/trc-river.js
-// Proxy for river turbidity/flow data from two regional councils:
+// Proxy for river turbidity/flow/rainfall data from two regional councils:
 //   TRC  (Taranaki Regional Council)  — FNU turbidity readings, 5-min interval
-//   GWRC (Greater Wellington RC)      — Flow m³/sec readings, 5-min interval
+//   GWRC (Greater Wellington RC)      — Flow m³/sec + Rainfall mm/h, 5-min/hourly interval
 //
 // Endpoint: /.netlify/functions/trc-river
 // Returns: { ok, fetched, sites: { [siteId]: { name, latestFNU, latestTime, trend, ... } } }
 //
 // For GWRC flow sites, m³/sec is converted to an equivalent FNU proxy
 // using a flow-turbidity relationship calibrated for Kāpiti Coast rivers.
+//
+// For GWRC rainfall sites, hourly mm totals are accumulated to rain_24h, rain_48h
+// for direct use in scoring (replaces Open-Meteo rain for Kāpiti spots).
 
 // ── TRC — Turbidity (FNU) via TRC portal ─────────────────────────────────────
 const TRC_BASE    = "https://www.trc.govt.nz/environment/maps-and-data/site-details/LoadGraphAndListData";
 const TRC_MEASURE = 19;       // Turbidity measurement ID
 const TIME_PERIOD = "2days";  // 2 days of 5-min readings — trend + latest
-
-// ── TRC — Rainfall gauges ─────────────────────────────────────────────────────
-// measureID=1 = Rainfall (mm, daily totals from TRC portal)
-// These give ground-truth rain for coastal spots — far more accurate than
-// Open-Meteo's offshore grid cells which badly underestimate coastal NZ rain.
-//
-// Gauge-to-spot assignment (see App.jsx spot configs):
-//   Site 52 (New Plymouth/Brooklands Zoo)   → Motumahanga, Boarfish Rock
-//   Site 48 (Waiwhakaiho at Egmont Village) → Nga Motu (drains directly to Back Beach)
-//   Site  8 (Cape Egmont)                   → Fin Fuckers, Metal Reef
-//   Site 10 (Kaupokonui at Glenn Rd)        → Opunake
-//   Site 27 (Patea)                         → Patea Inshore, Patea Offshore Trap
-const TRC_RAIN_MEASURE = 1;
-const RAIN_TIME_PERIOD = "30days"; // TRC valid values: 7days, 30days, 365days
-
-const TRC_RAIN_SITES = {
-  52: { name: "New Plymouth (Brooklands Zoo)",     coast: "north",  region: "taranaki" },
-  48: { name: "Waiwhakaiho at Egmont Village",     coast: "north",  region: "taranaki" },
-   8: { name: "Cape Egmont",                       coast: "mid",    region: "taranaki" },
-  10: { name: "Kaupokonui at Glenn Rd",            coast: "south",  region: "taranaki" },
-  27: { name: "Patea",                             coast: "patea",  region: "taranaki" },
-};
 
 const TRC_SITES = {
   12:  { name: "Mangaehu at Huinga",      coast: "south", region: "taranaki" },
@@ -45,13 +26,17 @@ const TRC_SITES = {
   167: { name: "Waiokura at No3 Fairway",  coast: "south", region: "taranaki" },
 };
 
-// ── GWRC — Flow (m³/sec) via Hilltop API ─────────────────────────────────────
-// Same Hilltop format as TRC but different domain and measurement.
-// Site names are the exact strings used in the GWRC Hilltop server.
+// ── GWRC — Flow (m³/sec) + Rainfall (mm/h) via Hilltop API ───────────────────
+// ID scheme:
+//   1000+ = GWRC Flow sites (existing)
+//   2000+ = GWRC Rainfall sites (new)
+//
+// Site and measurement strings must match GWRC Hilltop exactly.
+// Confirmed working at: https://hilltop.gw.govt.nz/Data.hts
+// Reference graph: https://graphs.gw.govt.nz/envmon?view=tabular-data&collection=Rainfall&site=...
 const GWRC_BASE = "https://hilltop.gw.govt.nz/Data.hts";
 
-const GWRC_SITES = {
-  // ID scheme: 1000+ to avoid collision with TRC numeric IDs
+const GWRC_FLOW_SITES = {
   1001: {
     name:        "Waikanae River at Water Treatment Plant",
     site:        "Waikanae River at Water Treatment Plant",
@@ -64,12 +49,11 @@ const GWRC_SITES = {
     // Baseflow ~1.0-1.5 m³/sec = clear (NTU~5-15)
     // Moderate flood ~3-5 m³/sec = elevated turbidity (NTU~50-150)
     // Major flood ~8+ m³/sec = very turbid (NTU~200+)
-    // Calibrated from GWRC field data and regional knowledge
     flowThresholds: { low: 1.5, moderate: 3.0, high: 6.0, veryHigh: 12.0 },
-    fnu_at_low:      8,    // FNU proxy at baseflow
-    fnu_at_moderate: 60,   // FNU proxy at moderate flow
-    fnu_at_high:     150,  // FNU proxy at high flow
-    fnu_at_veryHigh: 300,  // FNU proxy at flood flow
+    fnu_at_low:      8,
+    fnu_at_moderate: 60,
+    fnu_at_high:     150,
+    fnu_at_veryHigh: 300,
   },
   1002: {
     name:        "Otaki River at Pukehinau",
@@ -90,6 +74,31 @@ const GWRC_SITES = {
   },
 };
 
+const GWRC_RAIN_SITES = {
+  // Rainfall is measured as mm per hour (hourly interval).
+  // We accumulate to rain_24h, rain_48h, rain_7d for scoring.
+  // Fetching 9 days to match Open-Meteo historical window.
+  2001: {
+    name:        "Waikanae River at Water Treatment Plant — Rainfall",
+    site:        "Waikanae River at Water Treatment Plant",
+    measurement: "Rainfall",
+    coast:       "kapiti",
+    region:      "kapiti",
+    lat:         -40.888,
+    lon:         175.073,
+    // This gauge is co-located with the flow gauge — same physical station.
+    // Assigned spots: aeroplane_island, tokahaki (closest gauge to those spots)
+    assigned_spots: ["aeroplane_island", "tokahaki", "kapiti_west"],
+  },
+  // NOTE: If GWRC has a dedicated rain gauge closer to Ōtaki/Aeroplane Island,
+  // add it here as 2002. Check via:
+  // https://hilltop.gw.govt.nz/Data.hts?Service=Hilltop&Request=SiteList
+  // Then filter for sites with Rainfall measurement near -40.86, 174.94
+};
+
+// Keep a unified GWRC_SITES for the handler loop (backwards compatibility)
+const GWRC_SITES = { ...GWRC_FLOW_SITES };
+
 // ── Flow → FNU proxy conversion ───────────────────────────────────────────────
 // Uses a piecewise linear interpolation between calibrated threshold points.
 function flowToFNU(flow, siteMeta) {
@@ -101,6 +110,32 @@ function flowToFNU(flow, siteMeta) {
   if (flow <= t.high)     return f1 + (f2 - f1) * (flow - t.moderate) / (t.high - t.moderate);
   if (flow <= t.veryHigh) return f2 + (f3 - f2) * (flow - t.high) / (t.veryHigh - t.high);
   return f3;
+}
+
+// ── Hilltop XML parser ────────────────────────────────────────────────────────
+// Shared by both Flow and Rainfall fetchers.
+// Returns array of [timestampMs, value] pairs, sorted ascending.
+function parseHilltopXML(text) {
+  const timeRe = /<T>([^<]+)<\/T>/g;
+  const val1Re = /<I1>([^<]+)<\/I1>/g;
+  const times = [...text.matchAll(timeRe)].map(m => m[1]);
+  const vals  = [...text.matchAll(val1Re)].map(m => parseFloat(m[1]));
+  return times
+    .map((t, i) => [new Date(t).getTime(), vals[i]])
+    .filter(([ts, v]) => !isNaN(ts) && !isNaN(v))
+    .sort((a, b) => a[0] - b[0]);
+}
+
+// ── Hilltop date formatter ─────────────────────────────────────────────────────
+// GWRC Hilltop requires DD/MM/YYYY HH:MM:SS format.
+function fmtHilltop(d) {
+  const dd = d.getDate().toString().padStart(2, "0");
+  const mm = (d.getMonth() + 1).toString().padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const hh = d.getHours().toString().padStart(2, "0");
+  const mi = d.getMinutes().toString().padStart(2, "0");
+  const ss = d.getSeconds().toString().padStart(2, "0");
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}:${ss}`;
 }
 
 // ── Fetch a single TRC site (FNU) ─────────────────────────────────────────────
@@ -143,18 +178,17 @@ async function fetchTRCSite(siteId) {
   };
 }
 
-// ── Fetch a single GWRC site (Flow → FNU proxy) ───────────────────────────────
-async function fetchGWRCSite(siteId) {
-  const meta = GWRC_SITES[siteId];
-  const now   = new Date();
-  const from  = new Date(now - 2 * 24 * 3600 * 1000); // 2 days back
-  const fmt   = d => `${d.getDate().toString().padStart(2,"0")}/${(d.getMonth()+1).toString().padStart(2,"0")}/${d.getFullYear()} ${d.getHours().toString().padStart(2,"0")}:00:00`;
+// ── Fetch a single GWRC Flow site (Flow → FNU proxy) ─────────────────────────
+async function fetchGWRCFlowSite(siteId) {
+  const meta = GWRC_FLOW_SITES[siteId];
+  const now  = new Date();
+  const from = new Date(now - 2 * 24 * 3600 * 1000); // 2 days back
 
   const url = `${GWRC_BASE}/?Service=Hilltop&Request=GetData` +
     `&Site=${encodeURIComponent(meta.site)}` +
     `&Measurement=${encodeURIComponent(meta.measurement)}` +
-    `&From=${encodeURIComponent(fmt(from))}` +
-    `&To=${encodeURIComponent(fmt(now))}` +
+    `&From=${encodeURIComponent(fmtHilltop(from))}` +
+    `&To=${encodeURIComponent(fmtHilltop(now))}` +
     `&ShowQuality=No`;
 
   const res = await fetch(url, {
@@ -163,26 +197,12 @@ async function fetchGWRCSite(siteId) {
   });
   if (!res.ok) throw new Error(`GWRC HTTP ${res.status} site ${meta.site}`);
 
-  const text = await res.text();
-
-  // Parse Hilltop XML: <T>2026-03-27T06:10:00</T><I1>4.611</I1>
-  const timeRe  = /<T>([^<]+)<\/T>/g;
-  const val1Re  = /<I1>([^<]+)<\/I1>/g;
-  const times = [...text.matchAll(timeRe)].map(m => m[1]);
-  const vals  = [...text.matchAll(val1Re)].map(m => parseFloat(m[1]));
-
-  if (times.length === 0 || vals.length === 0) return null;
-
-  // Build timestamp-value pairs
-  const pts = times.map((t, i) => [new Date(t).getTime(), vals[i]])
-    .filter(([ts, v]) => !isNaN(ts) && !isNaN(v));
-
+  const pts = parseHilltopXML(await res.text());
   if (pts.length === 0) return null;
 
   const [latestTs, latestFlow] = pts[pts.length - 1];
   const latestFNU = Math.round(flowToFNU(latestFlow, meta));
 
-  // 6-hour trend in FNU units (not flow, so it's comparable to TRC)
   const sixHoursAgo = latestTs - 6 * 3600 * 1000;
   const sixHourPt   = pts.reduce((best, pt) =>
     Math.abs(pt[0] - sixHoursAgo) < Math.abs(best[0] - sixHoursAgo) ? pt : best
@@ -200,136 +220,104 @@ async function fetchGWRCSite(siteId) {
     coast:      meta.coast,
     region:     meta.region,
     source:     "gwrc_flow",
-    latestFNU,                                            // FNU proxy from flow
-    latestFlow: Math.round(latestFlow * 1000) / 1000,    // actual m³/sec
+    latestFNU,
+    latestFlow: Math.round(latestFlow * 1000) / 1000,
     latestTime: new Date(latestTs).toISOString(),
-    trend:      Math.round(trendFNU * 10) / 10,           // FNU/6h trend
-    trendFlow:  Math.round(trendFlow * 1000) / 1000,      // m³/sec/6h trend
+    trend:      Math.round(trendFNU * 10) / 10,
+    trendFlow:  Math.round(trendFlow * 1000) / 1000,
     recentMax:  Math.round(flowToFNU(recentMaxFlow, meta)),
     recentAvg:  Math.round(flowToFNU(recentAvgFlow, meta)),
-    // Sparkline in FNU proxy units for consistent UI display
-    sparkline: recent.slice(-24).map(pt => Math.round(flowToFNU(pt[1], meta))),
+    sparkline:  recent.slice(-24).map(pt => Math.round(flowToFNU(pt[1], meta))),
   };
 }
 
-// ── Supabase config — rain history read ──────────────────────────────────────
-// Anon key is safe here — river_rain_daily has public read RLS policy.
-// Write access (ingest) uses service role key from local trc-rain-ingest.mjs.
-const SUPABASE_URL = "https://mgcwrktuplnjtxkbsypc.supabase.co";
-const SUPABASE_KEY ="sb_publishable_VK8zOGEHVbqJ0cdkFIhAnQ_drXLJgIs";
+// ── Fetch a single GWRC Rainfall site ────────────────────────────────────────
+// Rainfall is hourly mm totals. We accumulate to rain_24h, rain_48h, rain_7d.
+// These values feed directly into Kāpiti scoring in place of Open-Meteo rain.
+//
+// Fetching 9 days to match Open-Meteo's past_days=9 historical window,
+// so the scoring model has the same rain window available.
+async function fetchGWRCRainSite(siteId) {
+  const meta = GWRC_RAIN_SITES[siteId];
+  const now  = new Date();
+  const from = new Date(now - 9 * 24 * 3600 * 1000); // 9 days back
 
-// ── Read rain history from Supabase (accumulated multi-year store) ────────────
-// Returns null if table is empty or Supabase unreachable (triggers TRC fallback)
-async function fetchRainFromSupabase(siteId, days = 30) {
-  const cutoff = new Date(Date.now() - days * 86400000).toISOString().split("T")[0];
-  const url = `${SUPABASE_URL}/rest/v1/river_rain_daily` +
-    `?site_id=eq.${siteId}&date=gte.${cutoff}&order=date.desc&limit=${days + 2}`;
-  const res = await fetch(url, {
-    headers: {
-      "apikey":        SUPABASE_KEY,
-      "Authorization": `Bearer ${SUPABASE_KEY}`,
-    },
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!res.ok) return null;
-  const rows = await res.json();
-  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const url = `${GWRC_BASE}/?Service=Hilltop&Request=GetData` +
+    `&Site=${encodeURIComponent(meta.site)}` +
+    `&Measurement=${encodeURIComponent(meta.measurement)}` +
+    `&From=${encodeURIComponent(fmtHilltop(from))}` +
+    `&To=${encodeURIComponent(fmtHilltop(now))}` +
+    `&ShowQuality=No`;
 
-  // Check freshness — if newest row is more than 36 hours old, fall back to TRC direct.
-  // Rain events can happen any day — a weekly ingest means mid-week rain is invisible.
-  // 36h threshold ensures yesterday's rain is always captured; today's partial day
-  // comes from TRC direct fallback which sums hourly buckets.
-  const newestDate = rows[0].date;
-  const newestMs   = new Date(newestDate).getTime();
-  const ageHours   = (Date.now() - newestMs) / 3600000;
-  if (ageHours > 36) {
-    console.log(`[Rain] Supabase site ${siteId} newest row ${newestDate} is ${Math.round(ageHours)}h old (>36h) — falling back to TRC direct`);
-    return null;
-  }
-
-  return rows; // [{ site_id, date, rain_mm, site_name }, ...]
-}
-
-// ── Build rain summary from rows (shared by Supabase + TRC paths) ─────────────
-function buildRainSummary(siteId, rows) {
-  // rows sorted date DESC — rows[0] is most recent
-  // Build dailyRain[0]=today ... [13]=13 days ago
-  const NZT_OFFSET = 13 * 3600 * 1000;
-  const todayKey   = new Date(Date.now() + NZT_OFFSET).toISOString().split("T")[0];
-  const todayMs    = new Date(todayKey).getTime();
-
-  // Index rows by date for fast lookup
-  const byDate = {};
-  rows.forEach(r => { byDate[r.date] = r.rain_mm ?? 0; });
-
-  const dailyRain = [];
-  for (let d = 0; d < 14; d++) {
-    const key = new Date(todayMs - d * 86400000).toISOString().split("T")[0];
-    dailyRain.push(Math.round((byDate[key] ?? 0) * 10) / 10);
-  }
-
-  const rain_24h = dailyRain[0] ?? 0;
-  const rain_48h = rain_24h + (dailyRain[1] ?? 0);
-  const rain_72h = rain_48h + (dailyRain[2] ?? 0);
-  const rain_7d  = dailyRain.slice(0, 7).reduce((a, b) => a + b, 0);
-  const rain_14d = dailyRain.reduce((a, b) => a + b, 0);
-
-  let days_since_rain = 0;
-  for (let i = 1; i < dailyRain.length; i++) {
-    if (dailyRain[i] > 1) break;
-    days_since_rain++;
-  }
-
-  return {
-    name:           TRC_RAIN_SITES[siteId]?.name ?? `Site ${siteId}`,
-    coast:          TRC_RAIN_SITES[siteId]?.coast,
-    region:         TRC_RAIN_SITES[siteId]?.region,
-    dailyRain,
-    rain_24h:        Math.round(rain_24h * 10) / 10,
-    rain_48h:        Math.round(rain_48h * 10) / 10,
-    rain_72h:        Math.round(rain_72h * 10) / 10,
-    rain_7d:         Math.round(rain_7d  * 10) / 10,
-    rain_14d:        Math.round(rain_14d * 10) / 10,
-    days_since_rain,
-  };
-}
-
-// ── Fetch rain for one site: Supabase primary, TRC direct fallback ────────────
-async function fetchRainSite(siteId) {
-  // 1. Try Supabase accumulated history
-  const sbRows = await fetchRainFromSupabase(siteId, 30).catch(() => null);
-  if (sbRows) {
-    const summary = buildRainSummary(siteId, sbRows);
-    return { ...summary, source: "supabase" };
-  }
-
-  // 2. Fall back to TRC direct (14 days only, no history)
-  console.log(`[Rain] Supabase unavailable for site ${siteId} — fetching TRC direct`);
-  const url = `${TRC_BASE}/?siteID=${siteId}&measureID=${TRC_RAIN_MEASURE}&timePeriod=${RAIN_TIME_PERIOD}`;
   const res = await fetch(url, {
     headers: { "User-Agent": "VizcastNZ/1.0" },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(10000), // slightly longer — 9 days of data
   });
-  if (!res.ok) throw new Error(`TRC Rain HTTP ${res.status} site ${siteId}`);
-  const json = await res.json();
-  if (json.error) throw new Error(`TRC Rain error site ${siteId}`);
+  if (!res.ok) throw new Error(`GWRC Rain HTTP ${res.status} site ${meta.site}`);
 
-  const pts = json.highStockData ?? [];
+  const pts = parseHilltopXML(await res.text());
   if (pts.length === 0) return null;
 
-  const NZT_OFFSET = 13 * 3600 * 1000;
-  const byDay = {};
-  pts.forEach(([ts, val]) => {
-    const key = new Date(ts + NZT_OFFSET).toISOString().split("T")[0];
-    byDay[key] = (byDay[key] ?? 0) + (val > 0 ? val : 0);
-  });
-  // Convert to row format compatible with buildRainSummary
-  const rows = Object.entries(byDay)
-    .map(([date, rain_mm]) => ({ date, rain_mm }))
-    .sort((a, b) => b.date.localeCompare(a.date));
+  const latestTs = pts[pts.length - 1][0];
+  const latestTime = new Date(latestTs).toISOString();
 
-  const summary = buildRainSummary(siteId, rows);
-  return { ...summary, source: "trc_direct" };
+  // Accumulate rainfall over windows
+  function sumRain(windowMs) {
+    const cutoff = latestTs - windowMs;
+    return pts
+      .filter(([ts]) => ts >= cutoff)
+      .reduce((sum, [, mm]) => sum + (mm > 0 ? mm : 0), 0);
+  }
+
+  const rain_1h  = Math.round(sumRain(1  * 3600 * 1000) * 10) / 10;
+  const rain_24h = Math.round(sumRain(24 * 3600 * 1000) * 10) / 10;
+  const rain_48h = Math.round(sumRain(48 * 3600 * 1000) * 10) / 10;
+  const rain_72h = Math.round(sumRain(72 * 3600 * 1000) * 10) / 10;
+  const rain_7d  = Math.round(sumRain( 7 * 24 * 3600 * 1000) * 10) / 10;
+
+  // Days since last meaningful rain (>= 1mm in a 1-hour reading)
+  // Walk backwards through pts to find last wet hour
+  let daysSinceRain = null;
+  for (let i = pts.length - 1; i >= 0; i--) {
+    if (pts[i][1] >= 1.0) {
+      daysSinceRain = Math.round((latestTs - pts[i][0]) / (24 * 3600 * 1000) * 10) / 10;
+      break;
+    }
+  }
+  if (daysSinceRain === null) daysSinceRain = 9; // no rain in window
+
+  // Peak hourly rain in last 24h (intensity indicator)
+  const last24 = pts.filter(([ts]) => ts >= latestTs - 24 * 3600 * 1000);
+  const peakHourly24h = last24.length > 0
+    ? Math.round(Math.max(...last24.map(([, v]) => v)) * 10) / 10
+    : 0;
+
+  // Sparkline — last 48 hours of hourly totals for UI display
+  const sparkline = pts
+    .filter(([ts]) => ts >= latestTs - 48 * 3600 * 1000)
+    .map(([, v]) => Math.round(v * 10) / 10);
+
+  return {
+    name:            meta.name,
+    coast:           meta.coast,
+    region:          meta.region,
+    source:          "gwrc_rain",
+    assigned_spots:  meta.assigned_spots,
+    latestTime,
+    // Rainfall accumulations — these feed directly into score-full
+    rain_1h,
+    rain_24h,
+    rain_48h,
+    rain_72h,
+    rain_7d,
+    daysSinceRain,
+    peakHourly24h,
+    sparkline,
+    // FNU not applicable for rain gauge — set null for consistent shape
+    latestFNU:  null,
+    latestFlow: null,
+    trend:      null,
+  };
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -338,51 +326,42 @@ exports.handler = async () => {
     "Access-Control-Allow-Origin":  "*",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type":  "application/json",
-    "Cache-Control": "no-store",
+    "Cache-Control": "public, max-age=300", // 5-min cache
   };
 
   try {
-    const trcJobs  = Object.keys(TRC_SITES).map(Number).map(id =>
+    const trcJobs = Object.keys(TRC_SITES).map(Number).map(id =>
       fetchTRCSite(id).then(val => [id, val]).catch(e => {
         console.error(`TRC site ${id} failed:`, e.message);
         return [id, null];
       })
     );
 
-    const gwrcJobs = Object.keys(GWRC_SITES).map(Number).map(id =>
-      fetchGWRCSite(id).then(val => [id, val]).catch(e => {
-        console.error(`GWRC site ${id} failed:`, e.message);
+    const gwrcFlowJobs = Object.keys(GWRC_FLOW_SITES).map(Number).map(id =>
+      fetchGWRCFlowSite(id).then(val => [id, val]).catch(e => {
+        console.error(`GWRC Flow site ${id} failed:`, e.message);
         return [id, null];
       })
     );
 
-    // Rain gauges — Supabase primary, TRC direct fallback
-    const rainJobs = Object.keys(TRC_RAIN_SITES).map(Number).map(id =>
-      fetchRainSite(id).then(val => [id, val]).catch(e => {
-        console.error(`Rain site ${id} failed:`, e.message);
+    const gwrcRainJobs = Object.keys(GWRC_RAIN_SITES).map(Number).map(id =>
+      fetchGWRCRainSite(id).then(val => [id, val]).catch(e => {
+        console.error(`GWRC Rain site ${id} failed:`, e.message);
         return [id, null];
       })
     );
 
-    const all = await Promise.all([...trcJobs, ...gwrcJobs]);
-    const rainAll = await Promise.all(rainJobs);
+    const all = await Promise.all([...trcJobs, ...gwrcFlowJobs, ...gwrcRainJobs]);
 
     const sites = {};
     for (const [id, val] of all) {
       if (val) sites[id] = val;
     }
 
-    // Rain gauges returned under a separate "rain" key to avoid ID collision
-    // with FNU turbidity sites. App.jsx reads riverData.rain[siteId].
-    const rain = {};
-    for (const [id, val] of rainAll) {
-      if (val) rain[id] = val;
-    }
-
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ ok: true, fetched: new Date().toISOString(), sites, rain }),
+      body: JSON.stringify({ ok: true, fetched: new Date().toISOString(), sites }),
     };
 
   } catch (err) {
