@@ -275,16 +275,19 @@ async function fetchGWRCRainSite(siteId) {
   const rain_72h = Math.round(sumRain(72 * 3600 * 1000) * 10) / 10;
   const rain_7d  = Math.round(sumRain( 7 * 24 * 3600 * 1000) * 10) / 10;
 
-  // Days since last meaningful rain (>= 1mm in a 1-hour reading)
-  // Walk backwards through pts to find last wet hour
+  // Days since last meaningful rain.
+  // Hilltop rainfall is stored at sub-hourly intervals (5 or 15 min),
+  // so individual readings are typically 0.2–0.4mm even during active rain.
+  // Threshold: >= 0.1mm in any single reading = rain is occurring.
+  // Walk backwards to find the most recent wet reading.
   let daysSinceRain = null;
   for (let i = pts.length - 1; i >= 0; i--) {
-    if (pts[i][1] >= 1.0) {
+    if (pts[i][1] >= 0.1) {
       daysSinceRain = Math.round((latestTs - pts[i][0]) / (24 * 3600 * 1000) * 10) / 10;
       break;
     }
   }
-  if (daysSinceRain === null) daysSinceRain = 9; // no rain in window
+  if (daysSinceRain === null) daysSinceRain = 9; // no rain in 9-day window
 
   // Peak hourly rain in last 24h (intensity indicator)
   const last24 = pts.filter(([ts]) => ts >= latestTs - 24 * 3600 * 1000);

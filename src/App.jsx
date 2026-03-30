@@ -167,7 +167,7 @@ const REGIONS = {
     cloudTile: { zoom: 9, x: 504, y: 319 },
     rtofs: { lat: -39.10, lon: 173.90 },
     supabaseUrl: "https://mgcwrktuplnjtxkbsypc.supabase.co",
-    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MjA3MzgsImV4cCI6MjA4ODA5NjczOH0.vk_ylXl3wny0NjIUD9D89324muA74bXx3Mg6Syq8yMA",
+    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE",
     logKey: "taranaki_dive_log",
     sessionName: "diver_name",
     sessionWelcome: "welcomed",
@@ -295,7 +295,6 @@ const REGIONS = {
         nw_rain_penalty: 0.5, southerly_bight: 0.0, tide_sensitive: 0.3,
         plume_reach: 0.7,
         trc_sites: [166, 17], // Urenui (primary), Mangati (secondary)
-        rain_gauge: 52,       // TRC rain gauge: New Plymouth / Brooklands Zoo
         note: "Outermost Sugar Loaf, ~1.5km offshore. Andesite rock, no papa. Pipeline: clean water from S/SE, not NW. Fast recovery (~1 day). Post-rain plume can still reach island.",
         river: false,
       },
@@ -320,7 +319,6 @@ const REGIONS = {
         wind_push: 0.3,
         nw_rain_penalty: 0.9, southerly_bight: 0.0, tide_sensitive: 1.0,
         trc_sites: [166, 17], // Urenui + Mangati — Waiwhakaiho is ungauged but correlates
-        rain_gauge: 48,       // TRC rain gauge: Waiwhakaiho at Egmont Village (drains to Back Beach)
         note: "Poor flushing. Heavy stormwater/Waiwhakaiho impact. Pipeline: Oct/Sep best, Jan/Feb worst — inverted vs all other spots. Only good after extended dry calm spells.",
         river: true,
       },
@@ -349,7 +347,6 @@ const REGIONS = {
         nw_rain_penalty: 0.15, southerly_bight: 0.1, tide_sensitive: 0.5,
         plume_reach: 0.2,
         trc_sites: [53, 117], // Waingongoro (closest) + Waitaha
-        rain_gauge: 8,        // TRC rain gauge: Cape Egmont
         note: "West-facing cape. Replica lighthouse (Warea Boat Club) is the landmark. Very exposed to westerly swell but clears quickly after rain with no major river input.",
         river: false,
       },
@@ -374,7 +371,6 @@ const REGIONS = {
         wind_push: 0.4,
         nw_rain_penalty: 0.2, southerly_bight: 0.0, tide_sensitive: 0.4,
         trc_sites: [53, 167], // Waingongoro + Waiokura
-        rain_gauge: 10,       // TRC rain gauge: Kaupokonui at Glenn Rd
         note: "Low papa + rain shadow under NW. Clears fastest after rain. Best fallback when other spots blown out.",
         river: true,
       },
@@ -398,7 +394,6 @@ const REGIONS = {
         wind_push: 0.15,
         nw_rain_penalty: 0.75, southerly_bight: 0.9, tide_sensitive: 0.85,
         trc_sites: [12], // Mangaehu at Huinga — closest to Patea
-        rain_gauge: 27,  // TRC rain gauge: Patea
         note: "Papa + persistently muddy Patea River + bight exposure. Triple threat in bad conditions.",
         river: true,
       },
@@ -423,7 +418,6 @@ const REGIONS = {
         wind_push: 0.5,
         nw_rain_penalty: 0.3, southerly_bight: 0.95, tide_sensitive: 0.2,
         trc_sites: [12], // Mangaehu — same catchment influence
-        rain_gauge: 27,  // TRC rain gauge: Patea
         note: "Clean on calm days. Pipeline: SW/E/S best — Whanganui water floods in on N/NE.",
         river: false,
       },
@@ -448,7 +442,6 @@ const REGIONS = {
         wind_push: 0.6,
         nw_rain_penalty: 0.55, southerly_bight: 0.3, tide_sensitive: 0.2,
         trc_sites: [17, 166], // Mangati + Urenui — Waitara area rivers
-        rain_gauge: 52,       // TRC rain gauge: New Plymouth / Brooklands Zoo
         note: "Reef at 30m. Pipeline: clean water from NE not NW. Waitara runoff impact. Most consistent year-round (60-79% clear).",
         river: true,
       },
@@ -586,33 +579,38 @@ const REGIONS = {
     cloudTile: { zoom: 9, x: 118, y: 219 },
     rtofs: { lat: 26.20, lon: -96.96 },
     supabaseUrl: "https://mgcwrktuplnjtxkbsypc.supabase.co",
-    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MjA3MzgsImV4cCI6MjA4ODA5NjczOH0.vk_ylXl3wny0NjIUD9D89324muA74bXx3Mg6Syq8yMA",
+    supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE",
     logKey: "spi_dive_log", sessionName: "spi_diver_name", sessionWelcome: "spi_welcomed",
     footer: "SPI Viz Forecast · Open-Meteo · NOAA RTOFS · NASA GIBS · Built for Gulf divers 🦈",
     W: { w_swell:0.40, w_wind:0.20, w_rain:0.40, push_mult:10.0, rain_pen_mult:18.0,
          cur_north:10.0, cur_south:12.0, bight_mult:8.0, sst_warm:12.0, sst_cold:-15.0,
          tide_mult:0.3, shelter_mult:0.08, river_mult:0.25,
          hist_2_5:0.65, hist_2_0:0.78, hist_1_5:0.90, seasonal_mult:1.0 },
-    // spotSeasonal recalibrated 27 Mar 2026
-    // Source: 379/382 clear S2 SWIR obs (2017-2025) at CORRECTED coords
-    // RGV Reef   annual median NTU=46.3  monthly: Jan27 Feb28 Mar98 Apr93 May40 Jun46 Jul37 Aug100 Sep89 Oct41 Nov26 Dec15
-    // Aquarium   annual median NTU=54.1  monthly: Jan28 Feb47 Mar100 Apr104 May62 Jun55 Jul57 Aug84 Sep68 Oct40 Nov25 Dec14
+    // spotSeasonal recalibrated 30 Mar 2026
+    // Source: 390/396 valid S2 SWIR obs at CORRECTED coords, retrain_s2only.py
+    // RGV Reef   n=392  NTU: Jan25 Feb31 Mar89 Apr52 May38 Jun46 Jul35 Aug31 Sep81 Oct34 Nov19 Dec17
+    // Aquarium   n=398  NTU: Jan20 Feb40 Mar111 Apr76 May39 Jun52 Jul47 Aug35 Sep75 Oct25 Nov18 Dec12
+    // Key corrections vs hand-tuned: Jun was 0/−2, data says −15/−15 (actually dirty)
+    //                                Jul was +15/−7, data says −1/−15 (near-neutral/dirty)
+    //                                May was +13/−15, data says −7/0 (moderate)
     spotSeasonal: {
-      "RGV Reef":     {1:+15,2:+15,3:-15,4:-15,5:+13,6:+0,7:+15,8:-15,9:-15,10:+11,11:+15,12:+15},
-      "The Aquarium": {1:+15,2:+15,3:-15,4:-15,5:-15,6:-2,7:-7,8:-15,9:-15,10:+15,11:+15,12:+15},
+      "RGV Reef":     {1:+15,2:+8,3:-15,4:-15,5:-7,6:-15,7:-1,8:+7,9:-15,10:+1,11:+15,12:+15},
+      "The Aquarium": {1:+15,2:+0,3:-15,4:-15,5:+0,6:-15,7:-15,8:+10,9:-15,10:+15,11:+15,12:+15},
     },
     // seasonalChart: clear% = satellite cloud-free rate, blueIdx = visibility quality 1-10
-    // Derived from 379+382 S2 SWIR obs at corrected coords (27 Mar 2026)
+    // Derived from 392+398 S2 SWIR obs at corrected coords (30 Mar 2026)
     // NTU→blueIdx: <20=9, 20-35=8, 35-50=6, 50-70=4, 70-90=2, >90=1
+    // RGV NTU by month: 25,31,89,52,38,46,35,31,81,34,19,17
+    // Aq  NTU by month: 20,40,111,76,39,52,47,35,75,25,18,12
     seasonalChart: [
       {month:"Jan",clear:77,blueIdx:8},{month:"Feb",clear:74,blueIdx:7},
-      {month:"Mar",clear:72,blueIdx:1},{month:"Apr",clear:69,blueIdx:1},
-      {month:"May",clear:75,blueIdx:5},{month:"Jun",clear:76,blueIdx:4},
-      {month:"Jul",clear:78,blueIdx:6},{month:"Aug",clear:77,blueIdx:2},
-      {month:"Sep",clear:74,blueIdx:2},{month:"Oct",clear:78,blueIdx:5},
-      {month:"Nov",clear:79,blueIdx:8},{month:"Dec",clear:80,blueIdx:9},
+      {month:"Mar",clear:72,blueIdx:1},{month:"Apr",clear:69,blueIdx:4},
+      {month:"May",clear:75,blueIdx:6},{month:"Jun",clear:76,blueIdx:4},
+      {month:"Jul",clear:78,blueIdx:6},{month:"Aug",clear:77,blueIdx:7},
+      {month:"Sep",clear:74,blueIdx:2},{month:"Oct",clear:78,blueIdx:7},
+      {month:"Nov",clear:79,blueIdx:9},{month:"Dec",clear:80,blueIdx:9},
     ],
-    seasonalNote: "761 S2 SWIR obs · corrected coords · 2017-2025 · Mar 2026",
+    seasonalNote: "790 S2 SWIR obs · corrected coords · 2017-2026 · Mar 2026",
     spots: [
       { name:"RGV Reef", spot_type:"swell",
         lat:26.27967, lon:-97.05722, marine_lat:26.27967, marine_lon:-97.05722,
@@ -654,32 +652,16 @@ function dirName(deg) {
 
 // Supabase Edge Function — ONNX scoring (Deno, deployed via supabase functions deploy)
 const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
-const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MjA3MzgsImV4cCI6MjA4ODA5NjczOH0.vk_ylXl3wny0NjIUD9D89324muA74bXx3Mg6Syq8yMA";
+const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
 
 // In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
-// Build timestamp — update this string on each deploy to bust the in-memory score cache.
-// Prevents users with open tabs seeing stale scores after a new version is deployed.
-// The 15-minute TTL (CACHE_TTL_MS) also auto-expires entries on a rolling basis.
-const BUILD_TS = "2026-03-30T18:10Z";
-
-// Score cache: keyed by BUILD_TS + spot + time-bucket + rain_48h
-// BUILD_TS prefix ensures cache is busted on every deploy (open tabs see new scores).
-// Time-bucket (15min) prevents duplicate API calls within the same render cycle.
 const _scoreCache = new Map();
-const _scoreCacheTime = new Map(); // tracks when each entry was cached (ms)
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes — auto-expire stale entries
 
 async function scoreSpot(cond, spot, W) {
   // Cache key: spot + date (for forecast) or current 15min bucket (for today)
   const dateKey = cond._forecastDate ?? Math.floor(Date.now() / 900000);
-const rainKey = cond.rain_48h?.toFixed(1) ?? "0";
-const key = `${BUILD_TS}:${spot.name}:${dateKey}:${rainKey}`;
-  if (_scoreCache.has(key)) {
-    const age = Date.now() - (_scoreCacheTime.get(key) ?? 0);
-    if (age < CACHE_TTL_MS) return _scoreCache.get(key);
-    _scoreCache.delete(key); // expired — fall through to fresh API call
-    _scoreCacheTime.delete(key);
-  }
+  const key = `${spot.name}:${dateKey}`;
+  if (_scoreCache.has(key)) return _scoreCache.get(key);
 
   try {
     const res = await fetch(SCORE_API, {
@@ -693,7 +675,6 @@ const key = `${BUILD_TS}:${spot.name}:${dateKey}:${rainKey}`;
     if (!res.ok) throw new Error(`Score API ${res.status}`);
     const result = await res.json();
     _scoreCache.set(key, result);
-    _scoreCacheTime.set(key, Date.now());
     return result;
   } catch (err) {
     console.error("[scoreSpot] API error:", err.message);
@@ -1123,25 +1104,15 @@ function rain48h(times, vals) {
 }
 
 function daysSinceRain(vals) {
-  // Build daily totals by summing hourly precipitation values into 24-hour buckets.
-  // Open-Meteo returns hourly data chronologically (oldest first).
-  // We flush any partial trailing bucket so today's morning rain isn't silently dropped.
   const daily = [];
   let bucket = 0;
   vals.forEach((v, i) => {
     bucket += safe(v);
     if ((i + 1) % 24 === 0) { daily.push(bucket); bucket = 0; }
   });
-  // Flush partial trailing bucket — critical: if it's 9am and 5mm fell this morning,
-  // the final incomplete day (< 24 readings) was previously discarded entirely.
-  if (bucket > 0) daily.push(bucket);
-
-  // Walk backwards from yesterday (daily.length - 2) counting dry days.
-  // Threshold lowered from 5mm to 1mm — 5mm was too forgiving; light showers
-  // (1–4mm) do stir up nearshore papa silt and should reset the streak.
   let days = 0;
   for (let i = daily.length - 2; i >= 0; i--) {
-    if (daily[i] > 1) break;
+    if (daily[i] > 5) break;
     days++;
   }
   return days;
@@ -1233,41 +1204,9 @@ function dailyAvgHistory(times, vals, days = 22) {
   return result;
 }
 
-// dailySumHistory — like dailyAvgHistory but SUMS hourly values per day.
-// Use for precipitation: 5mm over 24 hours = 5mm total, not 5/24 = 0.2mm.
-// Averaging hourly rain was understating the signal to score-full by ~24x.
-function dailySumHistory(times, vals, days = 22) {
-  if (!times || !vals || times.length === 0) return Array(days).fill(0);
-  const todayMs = Date.now();
-  const byDay = {};
-  times.forEach((t, i) => {
-    const hrs = (todayMs - new Date(t).getTime()) / 3600000;
-    if (hrs < 0 || hrs > days * 24) return;
-    const dayAgo = Math.floor(hrs / 24);
-    const v = typeof vals[i] === "number" && !isNaN(vals[i]) ? vals[i] : 0;
-    byDay[dayAgo] = (byDay[dayAgo] ?? 0) + v;
-  });
-  const result = [];
-  for (let d = 0; d < days; d++) {
-    result.push(byDay[d] ?? 0);
-  }
-  return result;
-}
-
 async function getDailyScores(marine, weather, spot, W, region, gaugeRain = null) {
   const mTimes = marine?.hourly?.time ?? [];
   const wTimes = weather?.hourly?.time ?? [];
-  // If we have gauge rain, build a date-keyed map of daily totals to override
-  // Open-Meteo precipitation. gaugeRain.dailyRain[0]=today, [1]=yesterday etc.
-  const gaugeDailyMap = {};
-  if (gaugeRain?.dailyRain) {
-    const NZT_OFFSET = 13 * 3600 * 1000;
-    const todayMs = new Date(new Date(Date.now() + NZT_OFFSET).toISOString().split("T")[0]).getTime();
-    gaugeRain.dailyRain.forEach((mm, i) => {
-      const key = new Date(todayMs - i * 86400000).toISOString().split("T")[0];
-      gaugeDailyMap[key] = mm;
-    });
-  }
 
   const mByDate = {};
   mTimes.forEach((t, i) => {
@@ -1317,10 +1256,7 @@ async function getDailyScores(marine, weather, spot, W, region, gaugeRain = null
   allDates.forEach(d => {
     const w = wByDate[d];
     const m = mByDate[d];
-    // Prefer TRC gauge rain over Open-Meteo — gauge is ground truth for past days,
-    // Open-Meteo is still used for future forecast days (gauge has no forecast).
-    const gaugeVal = gaugeDailyMap[d];
-    dailyRainMap[d]     = gaugeVal != null ? gaugeVal : (w ? sum(w.precip) : 0);
+    dailyRainMap[d]     = w ? sum(w.precip) : 0;
     dailySwellMaxMap[d] = m ? Math.max(...m.waveH, 0) : 0;
     dailySwellAvgMap[d] = m ? avg(m.waveH) : 0;
     dailySwellPMap[d]   = m ? avg(m.waveP) : 0;
@@ -1331,6 +1267,20 @@ async function getDailyScores(marine, weather, spot, W, region, gaugeRain = null
     dailyWindDirMap[d]  = w ? avg(w.windDir) : 0;
     dailySSTMap[d]      = m ? avg(m.sst) : 16;
   });
+
+  // Override today/yesterday rain with GWRC gauge data when available.
+  // Future forecast days always use Open-Meteo (gauges have no forecast).
+  if (gaugeRain) {
+    const sorted = [...allDates].sort();
+    const todayIdx = sorted.indexOf(todayStr);
+    if (todayIdx >= 0) {
+      dailyRainMap[sorted[todayIdx]] = gaugeRain.rain_24h ?? dailyRainMap[sorted[todayIdx]];
+      if (todayIdx > 0) {
+        dailyRainMap[sorted[todayIdx - 1]] = Math.max(0,
+          (gaugeRain.rain_48h ?? 0) - (gaugeRain.rain_24h ?? 0));
+      }
+    }
+  }
 
   // Build a hist22 anchored to a specific forecast date.
   // Index 0 = the forecast date itself, index N = N days before that.
@@ -1653,8 +1603,7 @@ async function fetchTRCRiverData() {
   if (!res.ok) throw new Error(`TRC proxy HTTP ${res.status}`);
   const json = await res.json();
   if (!json.ok) throw new Error(json.error || "TRC proxy error");
-  // Return both FNU sites and rain gauge data
-  return { sites: json.sites, rain: json.rain ?? {} };
+  return json.sites; // { [siteId]: { name, latestFNU, latestTime, trend, recentMax, recentAvg, sparkline } }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1679,11 +1628,6 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   const [riverStatus, setRiverStatus] = useState("idle");
   const riverRef = useRef({});
 
-  // TRC rain gauge data — ground-truth daily rain totals per coastal gauge
-  // { [siteId]: { dailyRain, rain_24h, rain_48h, rain_72h, rain_7d, days_since_rain } }
-  const [rainData, setRainData] = useState({});
-  const rainRef = useRef({});
-
   // ── Per-spot scored data ─────────────────────────────────────────────────
   const [spotDataMap, setSpotDataMap]     = useState({});
   const [loading, setLoading]             = useState(true);
@@ -1696,8 +1640,6 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   useEffect(() => { satRef.current = satData; }, [satData]);
   useEffect(() => { webcamRef.current = webcamData; }, [webcamData]);
   useEffect(() => { riverRef.current  = riverData;  }, [riverData]);
-  // rainRef.current is set directly in fetchTRCRiverData (not via useEffect)
-  // to avoid the race where rescoreAll fires before the ref sync effect runs.
 
   const computeSpotResult = useCallback(async (spot, marine, weather, rtofs, entries) => {
     const mTimes = marine.hourly?.time ?? [];
@@ -1705,21 +1647,22 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     const mIdx = nowIdx(mTimes);
     const wIdx = nowIdx(wTimes);
 
-    // ── TRC rain gauge override ───────────────────────────────────────────────
-    // Use ground-truth rain from TRC gauge if this spot has one assigned.
-    // Open-Meteo's offshore/coastal grid cells miss most Taranaki rain events
-    // (e.g. 33mm at New Plymouth gauge showed as 0.1mm in Open-Meteo).
-    // Falls back to Open-Meteo if gauge data hasn't loaded yet.
-    const gaugeRain = spot.rain_gauge ? rainRef.current?.[spot.rain_gauge] : null;
-
-    const r48 = gaugeRain ? gaugeRain.rain_48h : rain48h(wTimes, weather.hourly?.precipitation ?? []);
-    const dsr = gaugeRain ? gaugeRain.days_since_rain : daysSinceRain(weather.hourly?.precipitation ?? []);
-    // Gauge dailyRain[0..13] padded to 22 entries for hist22
-    const gaugeHist22Rain = gaugeRain
-      ? [...gaugeRain.dailyRain, ...Array(8).fill(0)].slice(0, 22)
-      : null;
+    let r48  = rain48h(wTimes, weather.hourly?.precipitation ?? []);
+    let dsr  = daysSinceRain(weather.hourly?.precipitation ?? []);
     const hist = maxSwellPast(mTimes, marine.hourly?.wave_height ?? [], 72);
     const rainHist  = dailyRainHistory(wTimes, weather.hourly?.precipitation ?? [], 14);
+
+    // Override rain with GWRC gauge data when available — far more accurate than
+    // Open-Meteo for coastal NZ (offshore grid cells understate rain up to 300×).
+    if (spot.trc_sites && riverRef.current) {
+      const rainSite = spot.trc_sites
+        .map(id => riverRef.current[id])
+        .find(s => s?.source === "gwrc_rain");
+      if (rainSite && rainSite.rain_48h != null) {
+        r48 = rainSite.rain_48h;
+        dsr = rainSite.daysSinceRain ?? dsr;
+      }
+    }
     const swellHist = dailySwellHistory(mTimes, marine.hourly?.wave_height ?? [], 7);
 
     // 22-day history arrays for ONNX feature builder
@@ -1732,9 +1675,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
       wind_spd:     dailyAvgHistory(wTimes, weather.hourly?.wind_speed_10m ?? [], 22),
       wind_dir:     dailyAvgHistory(wTimes, weather.hourly?.wind_direction_10m ?? [], 22),
       sst:          dailyAvgHistory(mTimes, marine.hourly?.sea_surface_temperature ?? [], 22),
-      // Prefer TRC gauge daily rain totals — Open-Meteo offshore grid underestimates
-      // coastal NZ rain by ~10-30x. Fall back to summed hourly if no gauge assigned.
-      rain: gaugeHist22Rain ?? dailySumHistory(wTimes, weather.hourly?.precipitation ?? [], 22),
+      rain:         dailyAvgHistory(wTimes, weather.hourly?.precipitation ?? [], 22),
     };
 
     const condBase = condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist);
@@ -1746,10 +1687,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     // CHANGE 2: Pull satellite turbidity for this spot if available
     const satSpot = satRef.current?.[spot.name];
     const satOverride = satSpot
-      // FIX: renamed satTurbidityAge → satDataAge to match score-full's expected key name.
-      // score-full checks cond.satDataAge for the rain suppression logic; sending
-      // satTurbidityAge meant it always saw undefined → suppression never fired.
-      ? { satTurbidity: satSpot.turbidity, satDataAge: satSpot.agedays }
+      ? { satTurbidity: satSpot.turbidity, satTurbidityAge: satSpot.agedays }
       : {};
 
     // Webcam turbidity for this spot if available
@@ -1806,14 +1744,7 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     const { score: rawScore, factors, plumeReach } = await scoreSpot(cond, spot, W);
 
     const biasMult = spotBiasMultiplier(spot.name, entries || []);
-    // FIX: bias correction disabled for lookup-v2 scoring system.
-    // All stored model_score values in dive logs were recorded under the old W-block
-    // formula which produces completely different raw scores. Applying those ratios
-    // to lookup-v2 output corrupts the score (e.g. seed log model_score=100 vs
-    // lookup-v2 returning ~50 → multiplier pulls score down by ~30pts incorrectly).
-    // Re-enable once 10+ lookup-v2 dives are logged per spot.
-    // To re-enable: change the line below back to: let score = applyBias(rawScore, biasMult);
-    let score = rawScore; // applyBias disabled — lookup-v2 transition period
+    let score = applyBias(rawScore, biasMult);
 
     // Seasonal delta removed — lookup table scoring already encodes seasonal patterns
     // through training on satellite observations. Adding spotSeasonal on top was masking
@@ -1821,9 +1752,23 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
     const REGION_DATA = REGIONS[region];
     const month = new Date().getMonth() + 1;
     const seasonalDeltas = REGION_DATA?.spotSeasonal?.[spot.name];
-    const seasonalDelta  = 0; // disabled
+    // NZ regions: DISABLED — lookup tables are satellite-trained, seasonality already encoded.
+    // SPI: ENABLED — XGBoost baselines, seasonal signal must be applied explicitly.
+    const seasonalDelta = (region === "spi" && seasonalDeltas)
+      ? (seasonalDeltas[month] ?? 0)
+      : 0;
+    if (seasonalDelta !== 0) score = Math.max(0, Math.min(100, score + seasonalDelta));
 
-    const forecast = await getDailyScores(marine, weather, spot, W, region, gaugeRain);
+    // Pass GWRC gauge rain to forecast scoring for today/yesterday
+    let gaugeRainForForecast = null;
+    if (spot.trc_sites && riverRef.current) {
+      const rainSite = spot.trc_sites
+        .map(id => riverRef.current[id])
+        .find(s => s?.source === "gwrc_rain");
+      if (rainSite && rainSite.rain_48h != null) gaugeRainForForecast = rainSite;
+    }
+
+    const forecast = await getDailyScores(marine, weather, spot, W, region, gaugeRainForForecast);
 
     // Replace forecast[0] (today) with the live score so gauge and
     // forecast bar always agree. The live score has all real-time
@@ -1844,22 +1789,17 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
 
   const rawApiRef = useRef({});
 
-  const rescoreAll = useCallback(async (trigger = "unknown") => {
+  const rescoreAll = useCallback(async () => {
     const raw = rawApiRef.current;
     if (Object.keys(raw).length === 0) return;
 
     const rtofs = currentRef.current;
-    const rainKeys = Object.keys(rainRef.current ?? {});
-    console.log(`[rescoreAll] trigger=${trigger} rain=${rainKeys.length > 0 ? rainKeys.map(k => `${k}:${rainRef.current[k]?.rain_48h}mm`).join(",") : "EMPTY"}`);
 
     await Promise.all(SPOTS.map(async (spot) => {
       const api = raw[spot.name];
       if (!api) return;
       try {
         const result = await computeSpotResult(spot, api.marine, api.weather, rtofs, logEntries);
-        if (spot.name.includes("Fin")) {
-          console.log(`[rescoreAll:${trigger}] Fin Fuckers → score=${result.score} rain_48h=${result.cond?.rain_48h} dsr=${result.cond?.days_since_rain}`);
-        }
         setSpotDataMap(prev => ({ ...prev, [spot.name]: result }));
       } catch(e) {
         console.error(`[rescoreAll] ${spot.name}:`, e.message);
@@ -1868,16 +1808,14 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
   }, [logEntries, computeSpotResult]);
 
   // Rescore when ocean data arrives (RTOFS)
-  useEffect(() => { rescoreAll("currentData/logEntries"); }, [currentData, logEntries, rescoreAll]);
+  useEffect(() => { rescoreAll(); }, [currentData, logEntries, rescoreAll]);
 
   // CHANGE 3: Rescore when satellite turbidity arrives
-  useEffect(() => { rescoreAll("satData"); }, [satData, rescoreAll]);
+  useEffect(() => { rescoreAll(); }, [satData, rescoreAll]);
   // Rescore when webcam data arrives
-  useEffect(() => { rescoreAll("webcamData"); }, [webcamData, rescoreAll]);
+  useEffect(() => { rescoreAll(); }, [webcamData, rescoreAll]);
   // Rescore when river data arrives
-  // NOTE: rain rescore is called directly in fetchTRCRiverData (not via useEffect)
-  // to guarantee rainRef.current is populated before rescoreAll reads it.
-  useEffect(() => { rescoreAll("riverData"); }, [riverData, rescoreAll]);
+  useEffect(() => { rescoreAll(); }, [riverData, rescoreAll]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1995,15 +1933,12 @@ function useAllSpotsData(logEntries, SPOTS, W, region) {
               const total = r + g + b;
               if (total > 30) {
                 const swirFraction = r / total;
-
-if (swirFraction >= swirMinSignal) {
-  const raw = (swirFraction - swirBaseline) / (swirMax - swirBaseline) * 100;
-  const b721Turbidity = Math.min(100, Math.max(0, Math.round(raw)));
-  const tcTurbidity = tc?.turbidity ?? 0;
-  turbidity = Math.max(b721Turbidity, tcTurbidity);
-  turbiditySource = b721Turbidity >= tcTurbidity ? "bands721" : "bands721+tc";
-  console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} B721=${b721Turbidity} TC=${tcTurbidity} → turbidity=${turbidity} (${turbiditySource})`);
-
+                if (swirFraction >= swirMinSignal) {
+                  // Signal is meaningful — use B721
+                  const raw = (swirFraction - swirBaseline) / (swirMax - swirBaseline) * 100;
+                  turbidity = Math.min(100, Math.max(0, Math.round(raw)));
+                  turbiditySource = "bands721";
+                  console.log(`[Satellite B721] ${s.name}: rgb(${r},${g},${b}) swirFrac=${swirFraction.toFixed(3)} → turbidity=${turbidity}`);
                 } else {
                   // swirFrac below minimum signal threshold — B721 not reliable here
                   // Fall through to TrueColor
@@ -2146,9 +2081,18 @@ if (swirFraction >= swirMinSignal) {
           const dir = weather.hourly?.wind_direction_10m?.[wIdxNow];
           if (spd != null && dir != null) {
             weather.current = { wind_speed_10m: spd, wind_direction_10m: dir };
+            console.log(`[${spot.name}] Current wind from hourly[${wIdxNow}]: ${spd} kph @ ${dir}°`);
           }
 
           const wIdx0 = nowIdx(weather.hourly?.time ?? []);
+          console.log(`[${spot.name}] Weather API:`, {
+            hasCurrentBlock: !!weather.current,
+            currentWind: weather.current?.wind_speed_10m ?? "MISSING",
+            currentWindDir: weather.current?.wind_direction_10m ?? "MISSING",
+            hourlyWindAtNow: weather.hourly?.wind_speed_10m?.[wIdx0] ?? "NULL",
+            hourlyLength: weather.hourly?.wind_speed_10m?.length ?? 0,
+            nonZeroWindHours: (weather.hourly?.wind_speed_10m ?? []).filter(v => v > 0).length,
+          });
 
           if (!cancelled) {
             rawApiRef.current[spot.name] = { marine, weather };
@@ -2158,6 +2102,12 @@ if (swirFraction >= swirMinSignal) {
               currentRef.current,
               logEntries,
             );
+
+            console.log(`[${spot.name}] Wind resolved:`, {
+              source: result.cond.wind_source,
+              spd: result.cond.wind_spd?.toFixed(1) + " kph",
+              dir: result.cond.wind_dir?.toFixed(0) + "° (" + dirName(result.cond.wind_dir) + ")",
+            });
 
             setSpotDataMap(prev => ({ ...prev, [spot.name]: result }));
           }
@@ -2171,30 +2121,15 @@ if (swirFraction >= swirMinSignal) {
 
       // Fire TRC river turbidity fetch in background (Taranaki only — Netlify proxy)
       let riverPromise = Promise.resolve();
-      if (region === "taranaki") {
+      if (region === "taranaki" || region === "kapiti" || region === "spi") {
         setRiverStatus("loading");
         riverPromise = (async () => {
           try {
-            const result = await fetchTRCRiverData();
-            if (result && !cancelled) {
-              const sites = result.sites ?? result; // backward compat if old format
-              const rain  = result.rain ?? {};
-              // Set refs FIRST before any state updates — guarantees computeSpotResult
-              // always reads current gauge rain regardless of React effect scheduling order.
+            const sites = await fetchTRCRiverData();
+            if (sites && !cancelled) {
               riverRef.current = sites;
-              rainRef.current  = rain;
-              // Update UI state
               setRiverData(sites);
-              setRainData(rain);
-              setRiverStatus(Object.keys(sites).length > 0 ? "ok" : "no-data");
-              if (Object.keys(rain).length > 0) {
-                console.log("[TRC Rain] Loaded gauges:", Object.entries(rain).map(([id, r]) =>
-                  `site${id}=${r.rain_48h}mm/48h dsr=${r.days_since_rain}`).join(", "));
-              }
-              // Rescore directly now refs are guaranteed current — do NOT rely on
-              // the [rainData] useEffect trigger which may fire after other rescores
-              // that read a stale rainRef.
-              await rescoreAll("rainData");
+              setRiverStatus("ok");
             } else if (!cancelled) {
               setRiverStatus("no-data");
             }
@@ -2958,7 +2893,6 @@ function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, map
   const mapInstanceRef = useRef(null);
   const markersRef     = useRef([]);
   const layersRef      = useRef({});
-  const spotScoresRef  = useRef({});  // always-current ref for use in async initMap closure
 
   const [activeLayer,  setActiveLayer]  = useState("satellite");
   const [layerDates,   setLayerDates]   = useState({
@@ -3013,9 +2947,6 @@ function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, map
     }
     return dateStrNDaysAgo(3);
   }
-
-  // Keep ref in sync so initMap closure always reads latest scores
-  useEffect(() => { spotScoresRef.current = spotScores; }, [spotScores]);
 
   function buildMarkers(map, L, scoresArg) {
     markersRef.current.forEach(m => m.remove());
@@ -3095,15 +3026,7 @@ function SpotMap({ spotScores, currentData, currentStatus, spots, mapCenter, map
     satellite.addTo(map);
     labels.addTo(map);
 
-    // Use ref not closure value — scores may not have arrived when initMap runs
-    buildMarkers(map, L, spotScoresRef.current);
-    // Re-build once more after a short delay in case scores arrived during
-    // the async findLastClearDate wait
-    setTimeout(() => {
-      if (mapInstanceRef.current && window.L) {
-        buildMarkers(mapInstanceRef.current, window.L, spotScoresRef.current);
-      }
-    }, 3000);
+    buildMarkers(map, L, spotScores);
   }
 
   useEffect(() => {
@@ -3978,13 +3901,8 @@ export default function App() {
     } catch(e) { return "taranaki"; }
   });
   const REGION = REGIONS[region];
-  // MUST be memoized — useAllSpotsData depends on [SPOTS].
-  // Without useMemo, every render creates a new SPOTS array reference,
-  // triggering the fetchAll useEffect cleanup (cancelled=true) on every render
-  // and killing all in-flight Open-Meteo fetches before they complete.
-  // This was causing rawApiRef to always be empty and score-full to never be called.
   const SPOTS = useMemo(() => REGION.spots, [region]);
-  const W = useMemo(() => REGION.W, [region]);
+  const W     = useMemo(() => REGION.W,     [region]);
 
   useEffect(() => {
     try {
