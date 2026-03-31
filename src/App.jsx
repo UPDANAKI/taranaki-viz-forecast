@@ -654,13 +654,16 @@ function dirName(deg) {
 const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
 const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
 
-// In-memory cache: keyed by spot name + hour, avoids duplicate calls within same render cycle
+// In-memory cache: keyed by spot name + hour + build timestamp
+// __BUILD_TS__ is injected by vite.config.js (= Netlify COMMIT_REF or Date.now())
+// This ensures every new deploy auto-busts stale cached scores.
+const _BUILD_TS = (typeof __BUILD_TS__ !== "undefined") ? __BUILD_TS__ : "dev";
 const _scoreCache = new Map();
 
 async function scoreSpot(cond, spot, W) {
-  // Cache key: spot + date (for forecast) or current 15min bucket (for today)
+  // Cache key: spot + date + build timestamp (for forecast) or current 15min bucket (for today)
   const dateKey = cond._forecastDate ?? Math.floor(Date.now() / 900000);
-  const key = `${spot.name}:${dateKey}`;
+  const key = `${spot.name}:${dateKey}:${_BUILD_TS}`;
   if (_scoreCache.has(key)) return _scoreCache.get(key);
 
   try {
