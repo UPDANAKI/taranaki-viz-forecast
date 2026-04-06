@@ -1,6 +1,6 @@
 import { safe, scoreSpot } from "./scoring.js";
 
-export async function getDailyScores(marine, weather, spot, W, region, gaugeRain = null) {
+export async function getDailyScores(marine, weather, spot, W, region, gaugeRain = null, murSstByDate = null) {
   const mTimes = marine?.hourly?.time ?? [];
   const wTimes = weather?.hourly?.time ?? [];
 
@@ -63,6 +63,15 @@ export async function getDailyScores(marine, weather, spot, W, region, gaugeRain
     dailyWindDirMap[d]  = w ? avg(w.windDir) : 0;
     dailySSTMap[d]      = m ? avg(m.sst) : 16;
   });
+
+  // Override past dates with NASA MUR 1km SST where available.
+  // MUR has ~1 day latency, so today may be null — yesterday onward is reliable.
+  // Future forecast dates are not in murSstByDate so Open-Meteo is used for those.
+  if (murSstByDate) {
+    for (const [date, sst] of Object.entries(murSstByDate)) {
+      if (sst != null) dailySSTMap[date] = sst;
+    }
+  }
 
   // Override today/yesterday rain with GWRC gauge data when available.
   // Future forecast days always use Open-Meteo (gauges have no forecast).
@@ -153,7 +162,7 @@ export async function getDailyScores(marine, weather, spot, W, region, gaugeRain
       wind_dir:        avg(w.windDir),
       rain_48h:        rain48h,
       days_since_rain: daysSinceRainVal,
-      sst:             avg(m?.sst ?? [0]),
+      sst:             murSstByDate?.[date] ?? avg(m?.sst ?? [0]) || 16,
       current_vel:     avg(m?.curVel ?? [0]),
       current_dir:     avg(m?.curDir ?? [0]),
       tide_h:          0,

@@ -1,9 +1,7 @@
 // ── RTOFS ocean current fetch (via Netlify proxy — ERDDAP blocks browser CORS) ─
 // Deploy netlify/functions/erddap-current.js alongside trc-river.js
 
-export async function fetchOceanCurrent() {
-  const lat = -39.05;
-  const lon = 173.87;
+export async function fetchOceanCurrent(lat = -39.05, lon = 173.87) {
   const url = `/.netlify/functions/erddap-current?lat=${lat}&lon=${lon}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`ERDDAP proxy HTTP ${res.status}`);

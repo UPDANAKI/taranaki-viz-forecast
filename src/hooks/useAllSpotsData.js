@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { REGIONS } from "../spots/index.js";
 import { scoreSpot, dirName, spotBiasMultiplier, applyBias } from "../lib/scoring.js";
 import { classifyPixel, sampleGibsTile } from "../lib/satellite.js";
 import { samplePrimoCams } from "../lib/webcam.js";
@@ -12,6 +11,9 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
   // ── Shared ocean data ────────────────────────────────────────────────────
   const [currentData, setCurrentData]     = useState(null);
   const [currentStatus, setCurrentStatus] = useState("idle");
+  const [currentBySpot, setCurrentBySpot] = useState({});
+  const currentBySpotRef = useRef({});
+  useEffect(() => { currentBySpotRef.current = currentBySpot; }, [currentBySpot]);
 
   // ── CHANGE 2: Satellite turbidity state ──────────────────────────────────
   const [satData, setSatData]     = useState({});   // { [spotName]: { turbidity, r, g, b, date, agedays } }
@@ -39,7 +41,7 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
   useEffect(() => { webcamRef.current = webcamData; }, [webcamData]);
   useEffect(() => { riverRef.current  = riverData;  }, [riverData]);
 
-  const computeSpotResult = useCallback(async (spot, marine, weather, rtofs, entries) => {
+  const computeSpotResult = useCallback(async (spot, marine, weather, rtofs, entries, murSstByDate = null) => {
     const mTimes = marine.hourly?.time ?? [];
     const wTimes = weather.hourly?.time ?? [];
     const mIdx = nowIdx(mTimes);
@@ -76,10 +78,23 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
       rain:         dailyAvgHistory(wTimes, weather.hourly?.precipitation ?? [], 22),
     };
 
+    // Override hist22.sst with MUR 1km values for the days we have them.
+    // Index 0 = today, index i = i days ago — same convention as dailyAvgHistory.
+    if (murSstByDate) {
+      hist22.sst = hist22.sst.map((val, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toLocaleDateString('en-CA');
+        return murSstByDate[dateStr] ?? val;
+      });
+    }
+
     const condBase = condFromHourly(marine, weather, mIdx, wIdx, r48, dsr, hist);
 
+    // erddap-current returns speed in knots; score-full expects m/s — divide by 1.944.
+    // ageHrs passed through so score-full can taper stale RTOFS data (Task B).
     const rtofsOverride = rtofs?.valid
-      ? { current_vel: rtofs.speed / 1.944, current_dir: rtofs.dir }
+      ? { current_vel: rtofs.speed / 1.944, current_dir: rtofs.dir, current_age_hrs: rtofs.ageHrs }
       : {};
 
     // CHANGE 2: Pull satellite turbidity for this spot if available
@@ -128,8 +143,18 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
       }
     }
 
+    // Use the most recent non-null MUR SST value as cond.sst for today's score.
+    // MUR has ~1 day latency, so try today first, then fall back to yesterday.
+    let murSstNow = null;
+    if (murSstByDate) {
+      const today     = new Date().toLocaleDateString('en-CA');
+      const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-CA');
+      murSstNow = murSstByDate[today] ?? murSstByDate[yesterday] ?? null;
+    }
+
     const cond = {
       ...condBase,
+      ...(murSstNow != null ? { sst: murSstNow } : {}),
       ...rtofsOverride,
       ...satOverride,
       ...webcamOverride,
@@ -142,20 +167,7 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
     const { score: rawScore, factors, plumeReach } = await scoreSpot(cond, spot, W);
 
     const biasMult = spotBiasMultiplier(spot.name, entries || []);
-    let score = applyBias(rawScore, biasMult);
-
-    // Seasonal delta removed — lookup table scoring already encodes seasonal patterns
-    // through training on satellite observations. Adding spotSeasonal on top was masking
-    // real condition changes. Score is now purely physics-based.
-    const REGION_DATA = REGIONS[region];
-    const month = new Date().getMonth() + 1;
-    const seasonalDeltas = REGION_DATA?.spotSeasonal?.[spot.name];
-    // NZ regions: DISABLED — lookup tables are satellite-trained, seasonality already encoded.
-    // SPI: ENABLED — XGBoost baselines, seasonal signal must be applied explicitly.
-    const seasonalDelta = (region === "spi" && seasonalDeltas)
-      ? (seasonalDeltas[month] ?? 0)
-      : 0;
-    if (seasonalDelta !== 0) score = Math.max(0, Math.min(100, score + seasonalDelta));
+    const score = applyBias(rawScore, biasMult);
 
     // Pass GWRC gauge rain to forecast scoring for today/yesterday
     let gaugeRainForForecast = null;
@@ -166,7 +178,7 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
       if (rainSite && rainSite.rain_48h != null) gaugeRainForForecast = rainSite;
     }
 
-    const forecast = await getDailyScores(marine, weather, spot, W, region, gaugeRainForForecast);
+    const forecast = await getDailyScores(marine, weather, spot, W, region, gaugeRainForForecast, murSstByDate);
 
     // Replace forecast[0] (today) with the live score so gauge and
     // forecast bar always agree. The live score has all real-time
@@ -178,7 +190,6 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
 
     return {
       cond, score, rawScore, factors, forecast, biasMult,
-      seasonalDelta,
       plumeReach: plumeReach ?? 0,
       satData: satRef.current?.[spot.name] ?? null,
       webcamData: webcamRef.current?.[spot.name] ?? null,
@@ -191,13 +202,13 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
     const raw = rawApiRef.current;
     if (Object.keys(raw).length === 0) return;
 
-    const rtofs = currentRef.current;
-
     await Promise.all(SPOTS.map(async (spot) => {
       const api = raw[spot.name];
       if (!api) return;
       try {
-        const result = await computeSpotResult(spot, api.marine, api.weather, rtofs, logEntries);
+        // Per-spot RTOFS data when available; fall back to the shared reference
+        const rtofs = currentBySpotRef.current?.[spot.name] ?? currentRef.current;
+        const result = await computeSpotResult(spot, api.marine, api.weather, rtofs, logEntries, api.murSst ?? null);
         setSpotDataMap(prev => ({ ...prev, [spot.name]: result }));
       } catch(e) {
         console.error(`[rescoreAll] ${spot.name}:`, e.message);
@@ -205,8 +216,8 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
     }));
   }, [logEntries, computeSpotResult]);
 
-  // Rescore when ocean data arrives (RTOFS)
-  useEffect(() => { rescoreAll(); }, [currentData, logEntries, rescoreAll]);
+  // Rescore when per-spot RTOFS data arrives — currentBySpot is the precise trigger
+  useEffect(() => { rescoreAll(); }, [currentBySpot, logEntries, rescoreAll]);
 
   // CHANGE 3: Rescore when satellite turbidity arrives
   useEffect(() => { rescoreAll(); }, [satData, rescoreAll]);
@@ -221,10 +232,53 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
     async function fetchAll() {
       setLoading(true);
 
-      // Fire RTOFS in background
-      const rtofsPromise = fetchOceanCurrent()
-        .then(data  => { if (!cancelled) { setCurrentData(data); setCurrentStatus("ok"); } })
-        .catch(err  => { if (!cancelled) { setCurrentStatus("error"); setCurrentData({ valid: false, error: err.message }); } });
+      // Build coord → spotNames map so spots sharing marine_lat/marine_lon share one fetch.
+      // Avoids up to 12 duplicate RTOFS requests across all regions.
+      const coordMap = {};
+      SPOTS.forEach(spot => {
+        const lat = spot.marine_lat ?? spot.lat;
+        const lon = spot.marine_lon ?? spot.lon;
+        const key = `${lat},${lon}`;
+        if (!coordMap[key]) coordMap[key] = { lat, lon, spotNames: [] };
+        coordMap[key].spotNames.push(spot.name);
+      });
+
+      const rtofsPromise = Promise.all(
+        Object.values(coordMap).map(({ lat, lon, spotNames }) =>
+          fetchOceanCurrent(lat, lon)
+            .then(data  => ({ spotNames, data }))
+            .catch(err  => {
+              if (window.location.hostname === "localhost")
+                console.warn(`[RTOFS] fetch failed for ${lat},${lon}:`, err.message);
+              return { spotNames, data: { valid: false, error: err.message } };
+            })
+        )
+      ).then(results => {
+        if (cancelled) return;
+        const bySpot = {};
+        let firstValid = null;
+        results.forEach(({ spotNames, data }) => {
+          spotNames.forEach(name => { bySpot[name] = data; });
+          if (!firstValid && data.valid) firstValid = data;
+        });
+        if (window.location.hostname === "localhost") {
+          console.log("[RTOFS] Per-spot current:", Object.fromEntries(
+            Object.entries(bySpot).map(([k, v]) => [k, v.valid ? `${v.speed?.toFixed(2)}kt @${v.dir?.toFixed(0)}°` : "invalid"])
+          ));
+        }
+        currentBySpotRef.current = bySpot;
+        setCurrentBySpot(bySpot);
+        // currentData drives the SpotMap display arrow — set to first valid result
+        setCurrentData(firstValid ?? { valid: false, error: "all coords failed" });
+        setCurrentStatus(firstValid ? "ok" : "error");
+      }).catch(err => {
+        if (!cancelled) {
+          if (window.location.hostname === "localhost")
+            console.warn("[RTOFS] Promise.all failed:", err.message);
+          setCurrentStatus("error");
+          setCurrentData({ valid: false, error: err.message });
+        }
+      });
 
       // CHANGE 3: Fire satellite turbidity fetch in background
       setSatStatus("loading");
@@ -452,7 +506,8 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
         const mLon = spot.marine_lon  ?? spot.lon;
 
         try {
-          const [weatherRes, marineRes] = await Promise.all([
+          const todayStr = new Date().toLocaleDateString('en-CA');
+          const [weatherRes, marineRes, murJson] = await Promise.all([
             fetch(
               `https://api.open-meteo.com/v1/forecast?latitude=${wLat}&longitude=${wLon}` +
               `&hourly=wind_speed_10m,wind_direction_10m,precipitation` +
@@ -463,6 +518,12 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
               `&hourly=wave_height,wave_period,wave_direction,swell_wave_height,swell_wave_period,swell_wave_direction,wind_wave_height,wind_wave_period,wind_wave_direction,sea_surface_temperature,ocean_current_velocity,ocean_current_direction` +
               `&timezone=Pacific%2FAuckland&forecast_days=7&past_days=9`
             ),
+            // Fetch NASA MUR 1km SST for past 8 days — overrides Open-Meteo 50km grid.
+            // Fails gracefully: null result means Open-Meteo SST is used as fallback.
+            fetch(
+              `/.netlify/functions/mur-sst?lat=${mLat}&lon=${mLon}&date=${todayStr}&days=8`,
+              { signal: AbortSignal.timeout(10000) }
+            ).then(r => r.ok ? r.json() : null).catch(() => null),
           ]);
 
           const weather = await weatherRes.json();
@@ -492,13 +553,32 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
             nonZeroWindHours: (weather.hourly?.wind_speed_10m ?? []).filter(v => v > 0).length,
           });
 
+          // Build murSstByDate map: { 'YYYY-MM-DD': sst_celsius }
+          // Index 0 = today, index i = i days ago (matches dailyAvgHistory convention).
+          let murSstByDate = null;
+          if (murJson?.source === 'MUR' && Array.isArray(murJson.sst)) {
+            murSstByDate = {};
+            murJson.sst.forEach((sst, i) => {
+              if (sst != null) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                murSstByDate[d.toLocaleDateString('en-CA')] = sst;
+              }
+            });
+            if (window.location.hostname === 'localhost') {
+              const count = Object.keys(murSstByDate).length;
+              console.log(`[${spot.name}] MUR SST: ${count}/8 days, latest ${Object.values(murSstByDate)[0]?.toFixed(1)}°C`);
+            }
+          }
+
           if (!cancelled) {
-            rawApiRef.current[spot.name] = { marine, weather };
+            rawApiRef.current[spot.name] = { marine, weather, murSst: murSstByDate };
 
             const result = await computeSpotResult(
               spot, marine, weather,
-              currentRef.current,
+              currentBySpotRef.current?.[spot.name] ?? currentRef.current,
               logEntries,
+              murSstByDate,
             );
 
             console.log(`[${spot.name}] Wind resolved:`, {
@@ -552,13 +632,13 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
     return () => { cancelled = true; };
   }, [SPOTS]);
 
-  // CHANGE 3: Expose satData and satStatus
   return {
     spotDataMap,
     loading,
     errors,
     currentData,
     currentStatus,
+    currentBySpot,
     satData,
     satStatus,
     webcamData,
