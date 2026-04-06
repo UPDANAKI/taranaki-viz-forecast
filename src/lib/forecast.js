@@ -162,7 +162,7 @@ export async function getDailyScores(marine, weather, spot, W, region, gaugeRain
       wind_dir:        avg(w.windDir),
       rain_48h:        rain48h,
       days_since_rain: daysSinceRainVal,
-      sst:             murSstByDate?.[date] ?? avg(m?.sst ?? [0]) || 16,
+      sst:             murSstByDate?.[date] ?? (avg(m?.sst ?? [0]) || 16),
       current_vel:     avg(m?.curVel ?? [0]),
       current_dir:     avg(m?.curDir ?? [0]),
       tide_h:          0,
