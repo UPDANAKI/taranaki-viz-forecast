@@ -4,8 +4,9 @@
 // The app interface is identical — callers don't need to change.
 
 // Supabase Edge Function — ONNX scoring (Deno, deployed via supabase functions deploy)
+import { SUPABASE_KEY } from "./supabase.js";
 const SCORE_API  = "https://mgcwrktuplnjtxkbsypc.supabase.co/functions/v1/score-full";
-const SCORE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nY3dya3R1cGxuanR4a2JzeXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk5MjU2OTcsImV4cCI6MjA1NTUwMTY5N30.EzBxBCRz0pGAOxN9l2MINBJxzGk1QcBdRmFIlZXijCE";
+const SCORE_KEY  = SUPABASE_KEY;
 
 // In-memory cache: keyed by spot name + hour + build timestamp
 // __BUILD_TS__ is injected by vite.config.js (= Netlify COMMIT_REF or Date.now())
