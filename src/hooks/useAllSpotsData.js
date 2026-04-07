@@ -526,6 +526,9 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
             ).then(r => r.ok ? r.json() : null).catch(() => null),
           ]);
 
+          if (!weatherRes.ok) throw new Error(`Weather proxy HTTP ${weatherRes.status}`);
+          if (!marineRes.ok)  throw new Error(`Marine proxy HTTP ${marineRes.status}`);
+
           const weather = await weatherRes.json();
           const marine  = await marineRes.json();
 

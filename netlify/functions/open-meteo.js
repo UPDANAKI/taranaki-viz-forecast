@@ -48,7 +48,7 @@ exports.handler = async (event) => {
   try {
     const res = await fetch(`${base}?${upstream.toString()}`, {
       headers: { "User-Agent": "Vizcast/1.0" },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(8000), // stay under Netlify's 10s function limit
     });
 
     const body = await res.text();
