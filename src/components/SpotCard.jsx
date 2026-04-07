@@ -311,7 +311,7 @@ export function SpotCard({ spot, data, error, currentData, logEntries, onLogUpda
                         <td>{d.cond.swell_h.toFixed(1)}m {d.cond.swell_p.toFixed(0)}s {dirName(d.cond.swell_dir)}</td>
                         <td>{d.cond.wind_spd.toFixed(0)}kph ({(d.cond.wind_spd / 1.852).toFixed(0)}kt) {dirName(d.cond.wind_dir)}</td>
                         <td>{d.cond.sst.toFixed(1)}°C</td>
-                        <td>{d.cond.rain_48h.toFixed(1)}mm</td>
+                        <td>{(d.cond.rain_24h ?? d.cond.rain_48h).toFixed(1)}mm</td>
                         <td style={{ color: d.cond.days_since_rain >= 4 ? "#00e5a0" : d.cond.days_since_rain >= 2 ? "#f0c040" : "#e06040" }}>
                           {d.cond.days_since_rain}d dry
                           {d.cond.swell_hist_72h > 1.5 && <span style={{ color: "#8ab", fontSize: "0.65rem" }}> · {d.cond.swell_hist_72h.toFixed(1)}m swell</span>}
