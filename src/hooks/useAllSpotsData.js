@@ -509,12 +509,12 @@ export function useAllSpotsData(logEntries, SPOTS, W, region) {
           const todayStr = new Date().toLocaleDateString('en-CA');
           const [weatherRes, marineRes, murJson] = await Promise.all([
             fetch(
-              `https://api.open-meteo.com/v1/forecast?latitude=${wLat}&longitude=${wLon}` +
+              `/.netlify/functions/open-meteo?type=weather&latitude=${wLat}&longitude=${wLon}` +
               `&hourly=wind_speed_10m,wind_direction_10m,precipitation` +
               `&wind_speed_unit=kmh&timezone=Pacific%2FAuckland&forecast_days=7&past_days=9`
             ),
             fetch(
-              `https://marine-api.open-meteo.com/v1/marine?latitude=${mLat}&longitude=${mLon}` +
+              `/.netlify/functions/open-meteo?type=marine&latitude=${mLat}&longitude=${mLon}` +
               `&hourly=wave_height,wave_period,wave_direction,swell_wave_height,swell_wave_period,swell_wave_direction,wind_wave_height,wind_wave_period,wind_wave_direction,sea_surface_temperature,ocean_current_velocity,ocean_current_direction` +
               `&timezone=Pacific%2FAuckland&forecast_days=7&past_days=9`
             ),

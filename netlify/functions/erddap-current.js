@@ -30,7 +30,7 @@ exports.handler = async (event) => {
 
     const res = await fetch(base + q, {
       headers: { "User-Agent": "TaranakiVizForecast/1.0" },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(20000),
       redirect: "follow",
     });
 
